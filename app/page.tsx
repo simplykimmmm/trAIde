@@ -1,0 +1,487 @@
+"use client";
+
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { AlertTriangle, Check, Power, RefreshCw, ShieldAlert, ShieldCheck, X } from "lucide-react";
+
+type Mode = "paper" | "live";
+
+type AccountResponse = {
+  marketDataProvider: "finnhub" | "mock-etoro";
+  liveTradingEnabled: boolean;
+  killSwitchActive: boolean;
+  account: {
+    currency: string;
+    balance: number;
+    equity: number;
+    availableCash: number;
+    dailyPnl: number;
+    dailyLoss: number;
+    dailyLossLimit: number;
+    dailyLossUsedPct: number;
+    openPositionCount: number;
+    updatedAt: string;
+  };
+  riskConfig: {
+    maxRiskPerTradePct: number;
+    maxDailyLossPct: number;
+    maxOpenPositions: number;
+    minAIConfidence: number;
+    allowLeverage: boolean;
+    allowShortSelling: boolean;
+    paperExposureMultiplier: number;
+    maxAccountRiskPct: number;
+    dataStaleThresholdMs: number;
+  };
+};
+
+type Position = {
+  id: string;
+  symbol: string;
+  side: "LONG" | "SHORT";
+  quantity: number;
+  entryPrice: number;
+  currentPrice: number;
+  unrealizedPnl: number;
+  stopLoss: number;
+  takeProfit: number;
+};
+
+type Analysis = {
+  symbol: string;
+  action: "BUY" | "SELL" | "HOLD";
+  confidence: number;
+  reasoning: string;
+  invalidation_condition: string;
+  lastPrice?: number;
+  error?: string;
+};
+
+type Suggestion = {
+  id: string;
+  symbol: string;
+  action: "BUY" | "SELL";
+  quantity: number;
+  entryPrice: number;
+  stopLoss: number;
+  takeProfit: number;
+  riskAmount: number;
+  confidence: number;
+  reasoning: string;
+  invalidationCondition: string;
+};
+
+type Trade = {
+  id: number;
+  timestamp: string;
+  symbol: string;
+  action: string;
+  quantity: number;
+  entry_price: number;
+  close_price: number | null;
+  pnl: number | null;
+  status: string;
+  rejection_reason: string | null;
+  ai_confidence: number | null;
+  notes: string | null;
+};
+
+const DISCLAIMER = "Educational prototype only. Not financial advice. No profit is promised or implied.";
+const BACKTEST_DISCLAIMER =
+  "⚠️ Past performance does not guarantee future results. Backtesting has significant limitations including survivorship bias and look-ahead bias.";
+
+export default function DashboardPage() {
+  const [mode, setMode] = useState<Mode>("paper");
+  const [account, setAccount] = useState<AccountResponse | null>(null);
+  const [positions, setPositions] = useState<Position[]>([]);
+  const [analyses, setAnalyses] = useState<Analysis[]>([]);
+  const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
+  const [trades, setTrades] = useState<Trade[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const [message, setMessage] = useState<string | null>(null);
+
+  const analysisBySymbol = useMemo(() => new Map(analyses.map((analysis) => [analysis.symbol, analysis])), [analyses]);
+
+  const refresh = useCallback(async () => {
+    setLoading(true);
+    setMessage(null);
+    try {
+      const [accountRes, positionsRes, analysisRes, suggestRes, tradesRes] = await Promise.all([
+        fetch("/api/account", { cache: "no-store" }),
+        fetch("/api/positions", { cache: "no-store" }),
+        fetch("/api/analysis", { cache: "no-store" }),
+        fetch(`/api/suggest?mode=${mode}`, { cache: "no-store" }),
+        fetch("/api/paper-trades", { cache: "no-store" }),
+      ]);
+
+      setAccount(await accountRes.json());
+      setPositions((await positionsRes.json()).positions ?? []);
+      setAnalyses((await analysisRes.json()).analyses ?? []);
+      setSuggestions((await suggestRes.json()).suggestions ?? []);
+      setTrades((await tradesRes.json()).trades ?? []);
+    } catch {
+      setMessage("Dashboard refresh failed. Trading suggestions remain unavailable until data can be verified.");
+    } finally {
+      setLoading(false);
+    }
+  }, [mode]);
+
+  useEffect(() => {
+    void refresh();
+  }, [refresh]);
+
+  async function triggerKillSwitch() {
+    await fetch("/api/kill-switch", { method: "POST", body: JSON.stringify({ active: true }) });
+    setMessage("Kill switch activated. All new trade activity is halted.");
+    await refresh();
+  }
+
+  async function clearKillSwitch() {
+    const confirmed = window.confirm("Un-halt local paper trading? New suggestions and paper approvals will be allowed again after risk checks.");
+    if (!confirmed) {
+      return;
+    }
+
+    await fetch("/api/kill-switch", { method: "POST", body: JSON.stringify({ active: false }) });
+    setMessage("Kill switch cleared. Paper trading activity is available again, subject to risk checks.");
+    await refresh();
+  }
+
+  async function submitDecision(suggestion: Suggestion, decision: "APPROVE" | "REJECT") {
+    if (mode === "live") {
+      const confirmed = window.confirm("Confirm manual live-trading approval for this single trade?");
+      if (!confirmed) {
+        return;
+      }
+    }
+
+    setBusyId(suggestion.id);
+    const response = await fetch("/api/approve-trade", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        decision,
+        mode,
+        symbol: suggestion.symbol,
+        action: suggestion.action,
+        quantity: suggestion.quantity,
+        entryPrice: suggestion.entryPrice,
+        stopLoss: suggestion.stopLoss,
+        takeProfit: suggestion.takeProfit,
+        confidence: suggestion.confidence,
+        reasoning: suggestion.reasoning,
+        invalidationCondition: suggestion.invalidationCondition,
+      }),
+    });
+    const payload = await response.json();
+    setMessage(payload.accepted ? "Trade accepted after risk checks." : "Trade rejected and logged.");
+    setBusyId(null);
+    await refresh();
+  }
+
+  const liveAllowed = account?.liveTradingEnabled === true;
+  const killActive = account?.killSwitchActive === true;
+
+  return (
+    <main className="min-h-screen bg-[#eef3ef]">
+      <header className="border-b border-line bg-white">
+        <div className="mx-auto flex max-w-7xl flex-col gap-4 px-4 py-4 md:flex-row md:items-center md:justify-between md:px-6">
+          <div className="flex flex-wrap items-center gap-3">
+            <h1 className="text-2xl font-semibold tracking-normal text-ink">trAIde</h1>
+            <span
+              className={`rounded px-2.5 py-1 text-xs font-bold tracking-normal ${
+                mode === "live" ? "bg-red-100 text-red-800" : "bg-emerald-100 text-emerald-800"
+              }`}
+            >
+              {mode === "live" ? "LIVE TRADING" : "PAPER TRADING"}
+            </span>
+            <span className="rounded bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-700">
+              DATA: {account?.marketDataProvider === "finnhub" ? "FINNHUB" : "MOCK"}
+            </span>
+            {killActive ? (
+              <span className="inline-flex items-center gap-1 rounded bg-red-50 px-2.5 py-1 text-xs font-semibold text-red-800">
+                <ShieldAlert size={14} /> HALTED
+              </span>
+            ) : null}
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            {liveAllowed ? (
+              <div className="grid grid-cols-2 rounded border border-line bg-panel p-1">
+                <button
+                  className={`rounded px-3 py-2 text-sm font-medium ${mode === "paper" ? "bg-white shadow-panel" : "text-slate-600"}`}
+                  onClick={() => setMode("paper")}
+                >
+                  Paper
+                </button>
+                <button
+                  className={`rounded px-3 py-2 text-sm font-medium ${mode === "live" ? "bg-red-700 text-white shadow-panel" : "text-slate-600"}`}
+                  onClick={() => setMode("live")}
+                >
+                  Live
+                </button>
+              </div>
+            ) : null}
+            <button
+              className="inline-flex h-10 items-center gap-2 rounded border border-red-200 bg-white px-3 text-sm font-semibold text-red-700 hover:bg-red-50 disabled:opacity-60"
+              onClick={triggerKillSwitch}
+              disabled={killActive}
+              title="Activate global kill switch"
+            >
+              <Power size={16} /> Kill Switch
+            </button>
+            {killActive ? (
+              <button
+                className="inline-flex h-10 items-center gap-2 rounded border border-emerald-200 bg-white px-3 text-sm font-semibold text-emerald-700 hover:bg-emerald-50"
+                onClick={clearKillSwitch}
+                title="Clear local kill switch"
+              >
+                <ShieldCheck size={16} /> Un-halt
+              </button>
+            ) : null}
+            <button
+              className="inline-flex h-10 items-center gap-2 rounded border border-line bg-white px-3 text-sm font-semibold text-ink hover:bg-panel"
+              onClick={refresh}
+              title="Refresh dashboard data"
+            >
+              <RefreshCw size={16} /> Refresh
+            </button>
+          </div>
+        </div>
+      </header>
+
+      <div className="mx-auto max-w-7xl px-4 py-4 md:px-6">
+        <div className="mb-4 flex flex-col gap-2 border-l-4 border-warning bg-amber-50 px-4 py-3 text-sm text-amber-900 md:flex-row md:items-center md:justify-between">
+          <span>{DISCLAIMER}</span>
+          <span>{BACKTEST_DISCLAIMER}</span>
+        </div>
+        {message ? <div className="mb-4 rounded border border-line bg-white px-4 py-3 text-sm text-ink shadow-panel">{message}</div> : null}
+
+        <div className="grid gap-4 lg:grid-cols-12">
+          <Panel title="Account Summary" className="lg:col-span-4">
+            <div className="grid grid-cols-2 gap-3">
+              <Metric label="Balance" value={money(account?.account.balance)} />
+              <Metric label="Equity" value={money(account?.account.equity)} />
+              <Metric label="Daily PnL" value={money(account?.account.dailyPnl)} tone={(account?.account.dailyPnl ?? 0) < 0 ? "bad" : "good"} />
+              <Metric label="Open Positions" value={String(account?.account.openPositionCount ?? 0)} />
+            </div>
+            <div className="mt-4">
+              <div className="mb-1 flex justify-between text-xs font-medium text-slate-600">
+                <span>Daily loss used</span>
+                <span>{percent(account?.account.dailyLossUsedPct ?? 0)} / {money(account?.account.dailyLossLimit)}</span>
+              </div>
+              <div className="h-2 overflow-hidden rounded bg-slate-200">
+                <div className="h-full bg-amber-600" style={{ width: `${Math.min((account?.account.dailyLossUsedPct ?? 0) * 100, 100)}%` }} />
+              </div>
+            </div>
+          </Panel>
+
+          <Panel title="Watchlist" className="lg:col-span-4">
+            <div className="space-y-2">
+              {analyses.map((analysis) => (
+                <div key={analysis.symbol} className="grid grid-cols-[1fr_auto_auto] items-center gap-3 border-b border-line pb-2 last:border-0">
+                  <span className="font-semibold">{analysis.symbol}</span>
+                  <span className="text-sm text-slate-600">{money(analysis.lastPrice)}</span>
+                  <SignalBadge action={analysis.action} />
+                </div>
+              ))}
+              {!analyses.length ? <Empty loading={loading} text="No watchlist data." /> : null}
+            </div>
+          </Panel>
+
+          <Panel title="Risk Settings" className="lg:col-span-4">
+            <div className="grid grid-cols-2 gap-3 text-sm">
+              <Metric label="Max Risk" value={percent(account?.riskConfig.maxRiskPerTradePct ?? 0)} />
+              <Metric label="Daily Loss" value={percent(account?.riskConfig.maxDailyLossPct ?? 0)} />
+              <Metric label="Max Positions" value={String(account?.riskConfig.maxOpenPositions ?? 0)} />
+              <Metric label="Min Confidence" value={percent(account?.riskConfig.minAIConfidence ?? 0)} />
+              <Metric label="Paper Exposure" value={`${account?.riskConfig.paperExposureMultiplier ?? 1}x`} />
+              <Metric label="Max Account Risk" value={percent(account?.riskConfig.maxAccountRiskPct ?? 0)} />
+              <Metric label="Paper Leverage" value={account?.riskConfig.allowLeverage ? "Allowed" : "Off"} />
+              <Metric label="Short Selling" value={account?.riskConfig.allowShortSelling ? "Allowed" : "Off"} />
+            </div>
+          </Panel>
+
+          <Panel title="Open Positions" className="lg:col-span-7">
+            <Table
+              columns={["Symbol", "Entry", "Current", "Unrealized", "Stop", "Target"]}
+              rows={positions.map((position) => [
+                `${position.symbol} ${position.side}`,
+                money(position.entryPrice),
+                money(position.currentPrice),
+                money(position.unrealizedPnl),
+                money(position.stopLoss),
+                money(position.takeProfit),
+              ])}
+              empty={loading ? "Loading positions." : "No open paper positions."}
+            />
+          </Panel>
+
+          <Panel title="AI Analysis Feed" className="lg:col-span-5">
+            <div className="space-y-3">
+              {analyses.map((analysis) => (
+                <div key={analysis.symbol} className="border-b border-line pb-3 last:border-0">
+                  <div className="mb-1 flex items-center justify-between gap-3">
+                    <span className="font-semibold">{analysis.symbol}</span>
+                    <span className="text-sm text-slate-600">{percent(analysis.confidence)}</span>
+                  </div>
+                  <div className="mb-1 flex items-center gap-2">
+                    <SignalBadge action={analysis.action} />
+                    {analysis.error ? <span className="inline-flex items-center gap-1 text-xs text-red-700"><AlertTriangle size={13} /> {analysis.error}</span> : null}
+                  </div>
+                  <p className="text-sm text-slate-700">{analysis.reasoning}</p>
+                  <p className="mt-1 text-xs text-slate-500">{analysis.invalidation_condition}</p>
+                </div>
+              ))}
+              {!analyses.length ? <Empty loading={loading} text="No analysis yet." /> : null}
+            </div>
+          </Panel>
+
+          <Panel title="Suggested Trades" className="lg:col-span-12">
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[860px] border-collapse text-sm">
+                <thead>
+                  <tr className="border-b border-line text-left text-xs uppercase text-slate-500">
+                    {["Symbol", "Action", "Size", "Entry", "Stop", "Target", "Risk", "Confidence", ""].map((heading) => (
+                      <th key={heading} className="py-2 pr-3 font-semibold">{heading}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {suggestions.map((suggestion) => (
+                    <tr key={suggestion.id} className="border-b border-line last:border-0">
+                      <td className="py-2 pr-3 font-semibold">{suggestion.symbol}</td>
+                      <td className="py-2 pr-3"><SignalBadge action={suggestion.action} /></td>
+                      <td className="py-2 pr-3">{suggestion.quantity.toFixed(4)}</td>
+                      <td className="py-2 pr-3">{money(suggestion.entryPrice)}</td>
+                      <td className="py-2 pr-3">{money(suggestion.stopLoss)}</td>
+                      <td className="py-2 pr-3">{money(suggestion.takeProfit)}</td>
+                      <td className="py-2 pr-3">{money(suggestion.riskAmount)}</td>
+                      <td className="py-2 pr-3">{percent(suggestion.confidence)}</td>
+                      <td className="py-2 pr-0">
+                        <div className="flex justify-end gap-2">
+                          <button
+                            className="inline-flex h-9 items-center gap-1 rounded bg-emerald-700 px-3 text-sm font-semibold text-white disabled:opacity-60"
+                            disabled={busyId === suggestion.id || killActive}
+                            onClick={() => submitDecision(suggestion, "APPROVE")}
+                            title="Approve this trade"
+                          >
+                            <Check size={15} /> Approve
+                          </button>
+                          <button
+                            className="inline-flex h-9 items-center gap-1 rounded border border-line bg-white px-3 text-sm font-semibold text-ink"
+                            disabled={busyId === suggestion.id}
+                            onClick={() => submitDecision(suggestion, "REJECT")}
+                            title="Reject this trade"
+                          >
+                            <X size={15} /> Reject
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              {!suggestions.length ? <Empty loading={loading} text="No trades currently pass risk checks." /> : null}
+            </div>
+          </Panel>
+
+          <Panel title="Trade Log" className="lg:col-span-12">
+            <Table
+              columns={["Time", "Symbol", "Action", "Size", "Entry", "Exit", "PnL", "Status", "Reason"]}
+              rows={trades.map((trade) => [
+                new Date(trade.timestamp).toLocaleString(),
+                trade.symbol,
+                trade.action,
+                trade.quantity ? trade.quantity.toFixed(4) : "-",
+                money(trade.entry_price),
+                trade.close_price ? money(trade.close_price) : "-",
+                trade.pnl === null ? "-" : money(trade.pnl),
+                trade.status,
+                trade.rejection_reason ?? trade.notes ?? "-",
+              ])}
+              empty={loading ? "Loading trades." : "No paper trades logged yet."}
+            />
+          </Panel>
+        </div>
+      </div>
+    </main>
+  );
+}
+
+function Panel({ title, children, className = "" }: { title: string; children: React.ReactNode; className?: string }) {
+  return (
+    <section className={`rounded border border-line bg-white p-4 shadow-panel ${className}`}>
+      <h2 className="mb-3 text-base font-semibold tracking-normal text-ink">{title}</h2>
+      {children}
+    </section>
+  );
+}
+
+function Metric({ label, value, tone }: { label: string; value: string; tone?: "good" | "bad" }) {
+  return (
+    <div className="min-w-0 border-b border-line pb-2">
+      <div className="text-xs font-medium text-slate-500">{label}</div>
+      <div className={`mt-1 text-lg font-semibold ${tone === "good" ? "text-emerald-700" : tone === "bad" ? "text-red-700" : "text-ink"}`}>{value}</div>
+    </div>
+  );
+}
+
+function SignalBadge({ action }: { action: "BUY" | "SELL" | "HOLD" }) {
+  const styles = {
+    BUY: "bg-emerald-100 text-emerald-800",
+    SELL: "bg-red-100 text-red-800",
+    HOLD: "bg-slate-100 text-slate-700",
+  };
+
+  return <span className={`rounded px-2 py-1 text-xs font-bold ${styles[action]}`}>{action}</span>;
+}
+
+function Table({ columns, rows, empty }: { columns: string[]; rows: string[][]; empty: string }) {
+  if (!rows.length) {
+    return <Empty loading={false} text={empty} />;
+  }
+
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full min-w-[760px] border-collapse text-sm">
+        <thead>
+          <tr className="border-b border-line text-left text-xs uppercase text-slate-500">
+            {columns.map((column) => (
+              <th key={column} className="py-2 pr-3 font-semibold">{column}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row, rowIndex) => (
+            <tr key={rowIndex} className="border-b border-line last:border-0">
+              {row.map((cell, cellIndex) => (
+                <td key={`${rowIndex}-${cellIndex}`} className="py-2 pr-3 align-top text-slate-700">{cell}</td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function Empty({ loading, text }: { loading: boolean; text: string }) {
+  return <div className="rounded border border-dashed border-line bg-panel px-3 py-6 text-center text-sm text-slate-500">{loading ? "Loading." : text}</div>;
+}
+
+function money(value: number | undefined | null): string {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return "-";
+  }
+
+  return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: value > 1000 ? 0 : 2 }).format(value);
+}
+
+function percent(value: number): string {
+  if (!Number.isFinite(value)) {
+    return "-";
+  }
+
+  return `${(value * 100).toFixed(1)}%`;
+}
