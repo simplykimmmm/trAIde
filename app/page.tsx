@@ -107,6 +107,8 @@ export default function DashboardPage() {
   const [loading, setLoading] = useState(true);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+  const [draftSpeedLevel, setDraftSpeedLevel] = useState(60);
+  const [draftRiskMultiplier, setDraftRiskMultiplier] = useState(5);
 
   const activityRows = useMemo(() => buildActivityRows(suggestions, positions, trades), [positions, suggestions, trades]);
   const realizedPnl = useMemo(() => trades.reduce((sum, trade) => sum + (trade.status.startsWith("CLOSED") ? trade.pnl ?? 0 : 0), 0), [trades]);
@@ -118,6 +120,8 @@ export default function DashboardPage() {
   const liveAllowed = account?.liveTradingEnabled === true;
   const killActive = account?.killSwitchActive === true;
   const botRunning = account?.botRunning === true && !killActive;
+  const draftRefreshMinutes = speedLevelToMinutes(draftSpeedLevel);
+  const draftSpeedMultiplier = calculateSpeedMultiplier(draftRefreshMinutes);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -146,6 +150,15 @@ export default function DashboardPage() {
   useEffect(() => {
     void refresh();
   }, [refresh]);
+
+  useEffect(() => {
+    if (!account?.botSettings) {
+      return;
+    }
+
+    setDraftSpeedLevel(minutesToSpeedLevel(account.botSettings.refreshIntervalMinutes));
+    setDraftRiskMultiplier(account.botSettings.riskMultiplier);
+  }, [account?.botSettings]);
 
   useEffect(() => {
     if (!account?.botRunning || killActive) {
@@ -182,6 +195,22 @@ export default function DashboardPage() {
     const payload = await response.json();
     setMessage(`Bot speed ${payload.settings.refreshIntervalMinutes} minute(s), risk ${payload.settings.riskMultiplier}x.`);
     await refresh();
+  }
+
+  function handleSpeedDraft(nextSpeedLevel: number) {
+    const clampedSpeed = clamp(nextSpeedLevel, 1, 60);
+    const nextMinutes = speedLevelToMinutes(clampedSpeed);
+    const nextSpeedMultiplier = calculateSpeedMultiplier(nextMinutes);
+    setDraftSpeedLevel(clampedSpeed);
+    setDraftRiskMultiplier(nextSpeedMultiplier);
+  }
+
+  function commitSpeed(speedLevel = draftSpeedLevel) {
+    void updateBotSettings({ refreshIntervalMinutes: speedLevelToMinutes(speedLevel) });
+  }
+
+  function commitRisk(riskMultiplier = draftRiskMultiplier) {
+    void updateBotSettings({ riskMultiplier });
   }
 
   async function triggerKillSwitch() {
@@ -352,23 +381,29 @@ export default function DashboardPage() {
             <div className="grid gap-4 md:grid-cols-2">
               <SliderControl
                 label="Refresh speed"
-                value={account?.botSettings.refreshIntervalMinutes ?? 1}
+                value={draftSpeedLevel}
                 min={1}
                 max={60}
                 step={1}
-                display={`${account?.botSettings.refreshIntervalMinutes ?? 1} min`}
-                hint={`Speed multiplier: ${account?.botSettings.speedMultiplier ?? 5}x`}
-                onChange={(value) => updateBotSettings({ refreshIntervalMinutes: value })}
+                display={`${draftRefreshMinutes} min`}
+                hint={`Speed multiplier: ${draftSpeedMultiplier}x`}
+                minLabel="Slow"
+                maxLabel="Fast"
+                onChange={handleSpeedDraft}
+                onCommit={commitSpeed}
               />
               <SliderControl
                 label="Paper risk multiplier"
-                value={account?.botSettings.riskMultiplier ?? 1}
+                value={Math.min(draftRiskMultiplier, draftSpeedMultiplier)}
                 min={1}
-                max={account?.botSettings.speedMultiplier ?? 5}
+                max={draftSpeedMultiplier}
                 step={0.1}
-                display={`${account?.botSettings.riskMultiplier ?? 1}x`}
+                display={`${Math.min(draftRiskMultiplier, draftSpeedMultiplier).toFixed(1)}x`}
                 hint={`Max rises with speed; effective risk/trade: ${percent(account?.riskConfig.maxRiskPerTradePct ?? 0)}`}
-                onChange={(value) => updateBotSettings({ riskMultiplier: value })}
+                minLabel="1x"
+                maxLabel={`${draftSpeedMultiplier}x`}
+                onChange={setDraftRiskMultiplier}
+                onCommit={commitRisk}
               />
             </div>
           </Panel>
@@ -631,6 +666,26 @@ function buildActivityRows(suggestions: Suggestion[], positions: Position[], tra
   return [...suggested, ...open, ...recent].slice(0, 8);
 }
 
+function minutesToSpeedLevel(minutes: number): number {
+  return 61 - clamp(Math.round(minutes), 1, 60);
+}
+
+function speedLevelToMinutes(speedLevel: number): number {
+  return 61 - clamp(Math.round(speedLevel), 1, 60);
+}
+
+function calculateSpeedMultiplier(refreshIntervalMinutes: number): number {
+  return Math.round((1 + ((60 - refreshIntervalMinutes) / 59) * 4) * 10) / 10;
+}
+
+function clamp(value: number, min: number, max: number): number {
+  if (!Number.isFinite(value)) {
+    return min;
+  }
+
+  return Math.min(Math.max(value, min), max);
+}
+
 function Panel({ title, children, className = "" }: { title: string; children: React.ReactNode; className?: string }) {
   return (
     <section className={`rounded border border-line bg-white p-4 shadow-panel ${className}`}>
@@ -648,7 +703,10 @@ function SliderControl({
   step,
   display,
   hint,
+  minLabel,
+  maxLabel,
   onChange,
+  onCommit,
 }: {
   label: string;
   value: number;
@@ -657,8 +715,13 @@ function SliderControl({
   step: number;
   display: string;
   hint: string;
+  minLabel: string;
+  maxLabel: string;
   onChange: (value: number) => void;
+  onCommit: (value: number) => void;
 }) {
+  const sliderValue = Math.min(value, max);
+
   return (
     <div className="min-w-0 border-b border-line pb-3">
       <div className="mb-2 flex items-center justify-between gap-3">
@@ -671,13 +734,20 @@ function SliderControl({
         min={min}
         max={max}
         step={step}
-        value={Math.min(value, max)}
+        value={sliderValue}
         onChange={(event) => onChange(Number(event.target.value))}
+        onMouseUp={(event) => onCommit(Number(event.currentTarget.value))}
+        onTouchEnd={(event) => onCommit(Number(event.currentTarget.value))}
+        onKeyUp={(event) => {
+          if (["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) {
+            onCommit(Number(event.currentTarget.value));
+          }
+        }}
       />
       <div className="mt-2 flex justify-between text-xs text-slate-500">
-        <span>{min}</span>
+        <span>{minLabel}</span>
         <span>{hint}</span>
-        <span>{max}</span>
+        <span>{maxLabel}</span>
       </div>
     </div>
   );
