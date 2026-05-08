@@ -1,10 +1,20 @@
 import Database from "better-sqlite3";
 import { mkdirSync } from "node:fs";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import type { PaperAccount, PaperTrade, PaperTradeStatus } from "./types";
 
-const DATA_DIR = path.join(process.cwd(), "data");
-const DB_PATH = process.env.PAPER_DB_PATH ?? path.join(DATA_DIR, "paper-trading.sqlite");
+const IS_VERCEL = Boolean(process.env.VERCEL);
+
+const DATA_DIR =
+  process.env.PAPER_DATA_DIR ??
+  (IS_VERCEL
+    ? path.join(tmpdir(), "traide")
+    : path.join(process.cwd(), "data"));
+
+const DB_PATH =
+  process.env.PAPER_DB_PATH ??
+  path.join(DATA_DIR, "paper-trading.sqlite");
 
 declare global {
   // eslint-disable-next-line no-var
@@ -15,7 +25,11 @@ export function getDatabase(): Database.Database {
   if (!globalThis.__traidePaperDb) {
     mkdirSync(path.dirname(DB_PATH), { recursive: true });
     const db = new Database(DB_PATH);
-    db.pragma("journal_mode = WAL");
+    try {
+  db.pragma(IS_VERCEL ? "journal_mode = DELETE" : "journal_mode = WAL");
+} catch (error) {
+  console.warn("SQLite journal mode setup failed", error);
+}
     globalThis.__traidePaperDb = db;
     ensureSchema(db);
   }
