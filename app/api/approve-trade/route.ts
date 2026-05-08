@@ -4,7 +4,7 @@ import { getEToroAdapter } from "@/lib/etoro";
 import type { TradeSide } from "@/lib/etoro/types";
 import { getPaperAccount, getOpenPaperTrades, isKillSwitchActive } from "@/lib/paper/database";
 import { executePaperTrade, logRejectedTrade } from "@/lib/paper/engine";
-import { getRiskConfig } from "@/lib/risk/config";
+import { getEffectivePaperRiskConfig, getRiskConfig } from "@/lib/risk/config";
 import { checkTradeAllowed } from "@/lib/risk/engine";
 
 export const runtime = "nodejs";
@@ -45,6 +45,7 @@ export async function POST(request: NextRequest) {
   const adapter = getEToroAdapter();
   const quote = await adapter.getQuote(body.symbol);
   const account = getPaperAccount();
+  const riskConfig = body.mode === "paper" ? getEffectivePaperRiskConfig() : getRiskConfig();
   const risk = checkTradeAllowed({
     killSwitchActive: isKillSwitchActive(),
     tradingMode: body.mode,
@@ -58,7 +59,7 @@ export async function POST(request: NextRequest) {
       suggested_entry: body.entryPrice,
       suggested_stop_loss: body.stopLoss,
       suggested_take_profit: body.takeProfit,
-      max_risk_pct: getRiskConfig().maxRiskPerTradePct,
+      max_risk_pct: riskConfig.maxRiskPerTradePct,
     },
     quote,
     account: {
@@ -74,7 +75,7 @@ export async function POST(request: NextRequest) {
       stopLoss: body.stopLoss,
       takeProfit: body.takeProfit,
     },
-    config: getRiskConfig(),
+    config: riskConfig,
   });
 
   if (!risk.allowed) {

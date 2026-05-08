@@ -10,6 +10,12 @@ type AccountResponse = {
   liveTradingEnabled: boolean;
   killSwitchActive: boolean;
   botRunning: boolean;
+  botSettings: {
+    refreshIntervalMinutes: number;
+    refreshIntervalMs: number;
+    speedMultiplier: number;
+    riskMultiplier: number;
+  };
   account: {
     currency: string;
     balance: number;
@@ -148,10 +154,10 @@ export default function DashboardPage() {
 
     const timer = window.setInterval(() => {
       void refresh();
-    }, 30_000);
+    }, account.botSettings.refreshIntervalMs);
 
     return () => window.clearInterval(timer);
-  }, [account?.botRunning, killActive, refresh]);
+  }, [account?.botRunning, account?.botSettings.refreshIntervalMs, killActive, refresh]);
 
   async function setBotActive(running: boolean) {
     const response = await fetch("/api/bot-state", {
@@ -160,7 +166,21 @@ export default function DashboardPage() {
       body: JSON.stringify({ running }),
     });
     const payload = await response.json();
-    setMessage(payload.error === "KILL_SWITCH_ACTIVE" ? "Cannot start while the kill switch is active." : running ? "Paper bot started. Suggestions refresh every 30 seconds; trades still need manual approval." : "Paper bot paused.");
+    setMessage(payload.error === "KILL_SWITCH_ACTIVE" ? "Cannot start while the kill switch is active." : running ? `Paper bot started. Suggestions refresh every ${payload.settings.refreshIntervalMinutes} minute(s); trades still need manual approval.` : "Paper bot paused.");
+    await refresh();
+  }
+
+  async function updateBotSettings(settings: { refreshIntervalMinutes?: number; riskMultiplier?: number }) {
+    const response = await fetch("/api/bot-state", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        running: account?.botRunning === true,
+        ...settings,
+      }),
+    });
+    const payload = await response.json();
+    setMessage(`Bot speed ${payload.settings.refreshIntervalMinutes} minute(s), risk ${payload.settings.riskMultiplier}x.`);
     await refresh();
   }
 
@@ -325,6 +345,31 @@ export default function DashboardPage() {
               <div className="h-2 overflow-hidden rounded bg-slate-200">
                 <div className="h-full bg-amber-600" style={{ width: `${Math.min((account?.account.dailyLossUsedPct ?? 0) * 100, 100)}%` }} />
               </div>
+            </div>
+          </Panel>
+
+          <Panel title="Bot Speed / Risk" className="lg:col-span-8">
+            <div className="grid gap-4 md:grid-cols-2">
+              <SliderControl
+                label="Refresh speed"
+                value={account?.botSettings.refreshIntervalMinutes ?? 1}
+                min={1}
+                max={60}
+                step={1}
+                display={`${account?.botSettings.refreshIntervalMinutes ?? 1} min`}
+                hint={`Speed multiplier: ${account?.botSettings.speedMultiplier ?? 5}x`}
+                onChange={(value) => updateBotSettings({ refreshIntervalMinutes: value })}
+              />
+              <SliderControl
+                label="Paper risk multiplier"
+                value={account?.botSettings.riskMultiplier ?? 1}
+                min={1}
+                max={account?.botSettings.speedMultiplier ?? 5}
+                step={0.1}
+                display={`${account?.botSettings.riskMultiplier ?? 1}x`}
+                hint={`Max rises with speed; effective risk/trade: ${percent(account?.riskConfig.maxRiskPerTradePct ?? 0)}`}
+                onChange={(value) => updateBotSettings({ riskMultiplier: value })}
+              />
             </div>
           </Panel>
 
@@ -592,6 +637,49 @@ function Panel({ title, children, className = "" }: { title: string; children: R
       <h2 className="mb-3 text-base font-semibold tracking-normal text-ink">{title}</h2>
       {children}
     </section>
+  );
+}
+
+function SliderControl({
+  label,
+  value,
+  min,
+  max,
+  step,
+  display,
+  hint,
+  onChange,
+}: {
+  label: string;
+  value: number;
+  min: number;
+  max: number;
+  step: number;
+  display: string;
+  hint: string;
+  onChange: (value: number) => void;
+}) {
+  return (
+    <div className="min-w-0 border-b border-line pb-3">
+      <div className="mb-2 flex items-center justify-between gap-3">
+        <label className="text-sm font-semibold text-ink">{label}</label>
+        <span className="rounded bg-panel px-2 py-1 text-xs font-bold text-ink">{display}</span>
+      </div>
+      <input
+        className="h-2 w-full accent-emerald-700"
+        type="range"
+        min={min}
+        max={max}
+        step={step}
+        value={Math.min(value, max)}
+        onChange={(event) => onChange(Number(event.target.value))}
+      />
+      <div className="mt-2 flex justify-between text-xs text-slate-500">
+        <span>{min}</span>
+        <span>{hint}</span>
+        <span>{max}</span>
+      </div>
+    </div>
   );
 }
 

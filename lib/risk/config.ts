@@ -1,4 +1,5 @@
 import type { RiskConfig } from "./types";
+import { getBotSettings } from "@/lib/paper/database";
 
 export const DEFAULT_RISK_CONFIG: RiskConfig = {
   maxRiskPerTradePct: 0.01,
@@ -23,6 +24,17 @@ export function getRiskConfig(): RiskConfig {
     paperExposureMultiplier: clamp(readNumber("PAPER_EXPOSURE_MULTIPLIER", DEFAULT_RISK_CONFIG.paperExposureMultiplier), 1, 20),
     maxAccountRiskPct: clamp(readNumber("MAX_ACCOUNT_RISK_PCT", DEFAULT_RISK_CONFIG.maxAccountRiskPct), 0.01, 1),
     dataStaleThresholdMs: readNumber("DATA_STALE_THRESHOLD_MS", DEFAULT_RISK_CONFIG.dataStaleThresholdMs),
+  };
+}
+
+export function getEffectivePaperRiskConfig(): RiskConfig {
+  const base = getRiskConfig();
+  const botSettings = getBotSettings();
+
+  return {
+    ...base,
+    maxRiskPerTradePct: Math.min(base.maxRiskPerTradePct * botSettings.riskMultiplier, 0.05),
+    paperExposureMultiplier: Math.min(base.paperExposureMultiplier * botSettings.speedMultiplier, 20),
   };
 }
 

@@ -5,7 +5,7 @@ import type { TradeSide, TradingMode } from "@/lib/etoro/types";
 import { getMarketQuote } from "@/lib/market";
 import { getPaperAccount, getOpenPaperTrades, isKillSwitchActive } from "@/lib/paper/database";
 import { logRejectedTrade } from "@/lib/paper/engine";
-import { getRiskConfig } from "@/lib/risk/config";
+import { getEffectivePaperRiskConfig, getRiskConfig } from "@/lib/risk/config";
 import { checkTradeAllowed } from "@/lib/risk/engine";
 import type { RiskCheckResult } from "@/lib/risk/types";
 import { getWatchlist } from "@/lib/watchlist";
@@ -14,9 +14,9 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function GET(request: NextRequest) {
-  const config = getRiskConfig();
   const url = new URL(request.url);
   const tradingMode = (url.searchParams.get("mode") === "live" ? "live" : "paper") satisfies TradingMode;
+  const config = tradingMode === "paper" ? getEffectivePaperRiskConfig() : getRiskConfig();
   const suggestions = [];
   const rejected = [];
 

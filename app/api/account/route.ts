@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { getMarketDataProvider } from "@/lib/market";
-import { getRiskConfig } from "@/lib/risk/config";
-import { getOpenPaperTrades, getPaperAccount, isBotRunning, isKillSwitchActive } from "@/lib/paper/database";
+import { getEffectivePaperRiskConfig } from "@/lib/risk/config";
+import { getBotSettings, getOpenPaperTrades, getPaperAccount, isBotRunning, isKillSwitchActive } from "@/lib/paper/database";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -9,7 +9,7 @@ export const dynamic = "force-dynamic";
 export async function GET() {
   const account = getPaperAccount();
   const openPositions = getOpenPaperTrades();
-  const riskConfig = getRiskConfig();
+  const riskConfig = getEffectivePaperRiskConfig();
   const dailyLossLimit = account.equity * riskConfig.maxDailyLossPct;
 
   return NextResponse.json({
@@ -18,6 +18,7 @@ export async function GET() {
     liveTradingEnabled: process.env.LIVE_TRADING === "true",
     killSwitchActive: isKillSwitchActive(),
     botRunning: isBotRunning(),
+    botSettings: getBotSettings(),
     account: {
       accountId: "paper-local",
       currency: "USD",

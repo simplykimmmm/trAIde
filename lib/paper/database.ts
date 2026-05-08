@@ -118,6 +118,55 @@ export function setBotRunning(active: boolean): void {
   setSystemState("BOT_RUNNING", active ? "true" : "false");
 }
 
+export type BotSettings = {
+  refreshIntervalMinutes: number;
+  refreshIntervalMs: number;
+  speedMultiplier: number;
+  riskMultiplier: number;
+};
+
+export function getBotSettings(): BotSettings {
+  const refreshIntervalMinutes = clampNumber(Number(getSystemState("BOT_REFRESH_MINUTES") ?? 1), 1, 60);
+  const speedMultiplier = calculateSpeedMultiplier(refreshIntervalMinutes);
+  const riskMultiplier = clampNumber(Number(getSystemState("BOT_RISK_MULTIPLIER") ?? speedMultiplier), 1, speedMultiplier);
+
+  return {
+    refreshIntervalMinutes,
+    refreshIntervalMs: refreshIntervalMinutes * 60_000,
+    speedMultiplier,
+    riskMultiplier,
+  };
+}
+
+export function setBotSettings(input: Partial<Pick<BotSettings, "refreshIntervalMinutes" | "riskMultiplier">>): BotSettings {
+  const current = getBotSettings();
+  const nextRefreshIntervalMinutes = input.refreshIntervalMinutes;
+  const nextRiskMultiplier = input.riskMultiplier;
+  const changingSpeed = typeof nextRefreshIntervalMinutes === "number";
+  const changingRisk = typeof nextRiskMultiplier === "number";
+
+  if (!changingSpeed && !changingRisk) {
+    return current;
+  }
+
+  const refreshIntervalMinutes =
+    changingSpeed
+      ? clampNumber(nextRefreshIntervalMinutes, 1, 60)
+      : current.refreshIntervalMinutes;
+  const speedMultiplier = calculateSpeedMultiplier(refreshIntervalMinutes);
+  const riskMultiplier =
+    changingRisk
+      ? clampNumber(nextRiskMultiplier, 1, speedMultiplier)
+      : changingSpeed
+        ? speedMultiplier
+        : current.riskMultiplier;
+
+  setSystemState("BOT_REFRESH_MINUTES", String(refreshIntervalMinutes));
+  setSystemState("BOT_RISK_MULTIPLIER", String(roundOneDecimal(riskMultiplier)));
+
+  return getBotSettings();
+}
+
 export function resetDailyLossIfNeeded(now = new Date()): void {
   const db = getDatabase();
   const account = db.prepare("SELECT * FROM paper_account WHERE id = 1").get() as PaperAccount;
@@ -181,4 +230,30 @@ function ensureSchema(db: Database.Database): void {
   if (!botRunning) {
     db.prepare("INSERT INTO system_state (key, value) VALUES ('BOT_RUNNING', 'false')").run();
   }
+
+  const refreshMinutes = db.prepare("SELECT key FROM system_state WHERE key = 'BOT_REFRESH_MINUTES'").get();
+  if (!refreshMinutes) {
+    db.prepare("INSERT INTO system_state (key, value) VALUES ('BOT_REFRESH_MINUTES', '1')").run();
+  }
+
+  const riskMultiplier = db.prepare("SELECT key FROM system_state WHERE key = 'BOT_RISK_MULTIPLIER'").get();
+  if (!riskMultiplier) {
+    db.prepare("INSERT INTO system_state (key, value) VALUES ('BOT_RISK_MULTIPLIER', '5')").run();
+  }
+}
+
+function calculateSpeedMultiplier(refreshIntervalMinutes: number): number {
+  return roundOneDecimal(1 + ((60 - refreshIntervalMinutes) / 59) * 4);
+}
+
+function clampNumber(value: number, min: number, max: number): number {
+  if (!Number.isFinite(value)) {
+    return min;
+  }
+
+  return Math.min(Math.max(value, min), max);
+}
+
+function roundOneDecimal(value: number): number {
+  return Math.round(value * 10) / 10;
 }
