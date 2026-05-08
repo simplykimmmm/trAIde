@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { AlertTriangle, Check, Power, RefreshCw, ShieldAlert, ShieldCheck, X } from "lucide-react";
+import { Activity, AlertTriangle, Check, Pause, Play, Power, RefreshCw, ShieldAlert, ShieldCheck, X } from "lucide-react";
 
 type Mode = "paper" | "live";
 
@@ -9,6 +9,7 @@ type AccountResponse = {
   marketDataProvider: "finnhub" | "mock-etoro";
   liveTradingEnabled: boolean;
   killSwitchActive: boolean;
+  botRunning: boolean;
   account: {
     currency: string;
     balance: number;
@@ -79,6 +80,7 @@ type Trade = {
   entry_price: number;
   close_price: number | null;
   pnl: number | null;
+  fee_approx: number;
   status: string;
   rejection_reason: string | null;
   ai_confidence: number | null;
@@ -100,7 +102,16 @@ export default function DashboardPage() {
   const [busyId, setBusyId] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
 
-  const analysisBySymbol = useMemo(() => new Map(analyses.map((analysis) => [analysis.symbol, analysis])), [analyses]);
+  const activityRows = useMemo(() => buildActivityRows(suggestions, positions, trades), [positions, suggestions, trades]);
+  const realizedPnl = useMemo(() => trades.reduce((sum, trade) => sum + (trade.status.startsWith("CLOSED") ? trade.pnl ?? 0 : 0), 0), [trades]);
+  const unrealizedPnl = useMemo(() => positions.reduce((sum, position) => sum + position.unrealizedPnl, 0), [positions]);
+  const totalFees = useMemo(() => trades.reduce((sum, trade) => sum + (trade.fee_approx || 0), 0), [trades]);
+  const openStake = useMemo(() => positions.reduce((sum, position) => sum + position.quantity * position.currentPrice, 0), [positions]);
+  const suggestedStake = useMemo(() => suggestions.reduce((sum, suggestion) => sum + suggestion.quantity * suggestion.entryPrice, 0), [suggestions]);
+  const pnlSeries = useMemo(() => buildPnlSeries(trades, unrealizedPnl), [trades, unrealizedPnl]);
+  const liveAllowed = account?.liveTradingEnabled === true;
+  const killActive = account?.killSwitchActive === true;
+  const botRunning = account?.botRunning === true && !killActive;
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -129,6 +140,29 @@ export default function DashboardPage() {
   useEffect(() => {
     void refresh();
   }, [refresh]);
+
+  useEffect(() => {
+    if (!account?.botRunning || killActive) {
+      return;
+    }
+
+    const timer = window.setInterval(() => {
+      void refresh();
+    }, 30_000);
+
+    return () => window.clearInterval(timer);
+  }, [account?.botRunning, killActive, refresh]);
+
+  async function setBotActive(running: boolean) {
+    const response = await fetch("/api/bot-state", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ running }),
+    });
+    const payload = await response.json();
+    setMessage(payload.error === "KILL_SWITCH_ACTIVE" ? "Cannot start while the kill switch is active." : running ? "Paper bot started. Suggestions refresh every 30 seconds; trades still need manual approval." : "Paper bot paused.");
+    await refresh();
+  }
 
   async function triggerKillSwitch() {
     await fetch("/api/kill-switch", { method: "POST", body: JSON.stringify({ active: true }) });
@@ -179,9 +213,6 @@ export default function DashboardPage() {
     await refresh();
   }
 
-  const liveAllowed = account?.liveTradingEnabled === true;
-  const killActive = account?.killSwitchActive === true;
-
   return (
     <main className="min-h-screen bg-[#eef3ef]">
       <header className="border-b border-line bg-white">
@@ -198,6 +229,9 @@ export default function DashboardPage() {
             <span className="rounded bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-700">
               DATA: {account?.marketDataProvider === "finnhub" ? "FINNHUB" : "MOCK"}
             </span>
+            <span className={`rounded px-2.5 py-1 text-xs font-semibold ${botRunning ? "bg-emerald-100 text-emerald-800" : "bg-slate-100 text-slate-700"}`}>
+              BOT: {botRunning ? "RUNNING" : "PAUSED"}
+            </span>
             {killActive ? (
               <span className="inline-flex items-center gap-1 rounded bg-red-50 px-2.5 py-1 text-xs font-semibold text-red-800">
                 <ShieldAlert size={14} /> HALTED
@@ -206,6 +240,24 @@ export default function DashboardPage() {
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
+            {botRunning ? (
+              <button
+                className="inline-flex h-10 items-center gap-2 rounded border border-line bg-white px-3 text-sm font-semibold text-ink hover:bg-panel"
+                onClick={() => setBotActive(false)}
+                title="Pause paper bot refresh loop"
+              >
+                <Pause size={16} /> Pause
+              </button>
+            ) : (
+              <button
+                className="inline-flex h-10 items-center gap-2 rounded bg-emerald-700 px-3 text-sm font-semibold text-white hover:bg-emerald-800 disabled:opacity-60"
+                onClick={() => setBotActive(true)}
+                disabled={killActive}
+                title="Start paper bot refresh loop"
+              >
+                <Play size={16} /> Start
+              </button>
+            )}
             {liveAllowed ? (
               <div className="grid grid-cols-2 rounded border border-line bg-panel p-1">
                 <button
@@ -262,7 +314,7 @@ export default function DashboardPage() {
             <div className="grid grid-cols-2 gap-3">
               <Metric label="Balance" value={money(account?.account.balance)} />
               <Metric label="Equity" value={money(account?.account.equity)} />
-              <Metric label="Daily PnL" value={money(account?.account.dailyPnl)} tone={(account?.account.dailyPnl ?? 0) < 0 ? "bad" : "good"} />
+              <Metric label="Live PnL" value={money(realizedPnl + unrealizedPnl)} tone={realizedPnl + unrealizedPnl < 0 ? "bad" : "good"} />
               <Metric label="Open Positions" value={String(account?.account.openPositionCount ?? 0)} />
             </div>
             <div className="mt-4">
@@ -272,6 +324,18 @@ export default function DashboardPage() {
               </div>
               <div className="h-2 overflow-hidden rounded bg-slate-200">
                 <div className="h-full bg-amber-600" style={{ width: `${Math.min((account?.account.dailyLossUsedPct ?? 0) * 100, 100)}%` }} />
+              </div>
+            </div>
+          </Panel>
+
+          <Panel title="Live PnL" className="lg:col-span-8">
+            <div className="grid gap-4 md:grid-cols-[1fr_220px]">
+              <PnlChart points={pnlSeries} />
+              <div className="grid grid-cols-2 gap-3 md:grid-cols-1">
+                <Metric label="Realized" value={money(realizedPnl)} tone={realizedPnl < 0 ? "bad" : "good"} />
+                <Metric label="Unrealized" value={money(unrealizedPnl)} tone={unrealizedPnl < 0 ? "bad" : "good"} />
+                <Metric label="Open Stake" value={money(openStake)} />
+                <Metric label="Fees Paid" value={money(totalFees)} tone={totalFees > 0 ? "bad" : undefined} />
               </div>
             </div>
           </Panel>
@@ -286,6 +350,22 @@ export default function DashboardPage() {
                 </div>
               ))}
               {!analyses.length ? <Empty loading={loading} text="No watchlist data." /> : null}
+            </div>
+          </Panel>
+
+          <Panel title="Live Buy / Sell Activity" className="lg:col-span-4">
+            <div className="space-y-2">
+              {activityRows.map((row) => (
+                <div key={row.id} className="grid grid-cols-[auto_1fr_auto] items-center gap-3 border-b border-line pb-2 last:border-0">
+                  <SignalBadge action={row.action} />
+                  <div className="min-w-0">
+                    <div className="font-semibold text-ink">{row.symbol}</div>
+                    <div className="truncate text-xs text-slate-500">{row.label}</div>
+                  </div>
+                  <div className="text-right text-sm font-semibold text-ink">{money(row.stake)}</div>
+                </div>
+              ))}
+              {!activityRows.length ? <Empty loading={loading} text="No active buys or sells yet." /> : null}
             </div>
           </Panel>
 
@@ -304,9 +384,10 @@ export default function DashboardPage() {
 
           <Panel title="Open Positions" className="lg:col-span-7">
             <Table
-              columns={["Symbol", "Entry", "Current", "Unrealized", "Stop", "Target"]}
+              columns={["Symbol", "Stake", "Entry", "Current", "Unrealized", "Stop", "Target"]}
               rows={positions.map((position) => [
                 `${position.symbol} ${position.side}`,
+                money(position.quantity * position.currentPrice),
                 money(position.entryPrice),
                 money(position.currentPrice),
                 money(position.unrealizedPnl),
@@ -339,10 +420,10 @@ export default function DashboardPage() {
 
           <Panel title="Suggested Trades" className="lg:col-span-12">
             <div className="overflow-x-auto">
-              <table className="w-full min-w-[860px] border-collapse text-sm">
+              <table className="w-full min-w-[980px] border-collapse text-sm">
                 <thead>
                   <tr className="border-b border-line text-left text-xs uppercase text-slate-500">
-                    {["Symbol", "Action", "Size", "Entry", "Stop", "Target", "Risk", "Confidence", ""].map((heading) => (
+                    {["Symbol", "Action", "Size", "Stake", "Entry", "Stop", "Target", "Risk", "Confidence", ""].map((heading) => (
                       <th key={heading} className="py-2 pr-3 font-semibold">{heading}</th>
                     ))}
                   </tr>
@@ -353,6 +434,7 @@ export default function DashboardPage() {
                       <td className="py-2 pr-3 font-semibold">{suggestion.symbol}</td>
                       <td className="py-2 pr-3"><SignalBadge action={suggestion.action} /></td>
                       <td className="py-2 pr-3">{suggestion.quantity.toFixed(4)}</td>
+                      <td className="py-2 pr-3">{money(suggestion.quantity * suggestion.entryPrice)}</td>
                       <td className="py-2 pr-3">{money(suggestion.entryPrice)}</td>
                       <td className="py-2 pr-3">{money(suggestion.stopLoss)}</td>
                       <td className="py-2 pr-3">{money(suggestion.takeProfit)}</td>
@@ -383,20 +465,23 @@ export default function DashboardPage() {
                 </tbody>
               </table>
               {!suggestions.length ? <Empty loading={loading} text="No trades currently pass risk checks." /> : null}
+              <div className="mt-3 text-xs text-slate-500">Suggested stake waiting for approval: {money(suggestedStake)}. Paper fee: $1 on open and $1 on close.</div>
             </div>
           </Panel>
 
           <Panel title="Trade Log" className="lg:col-span-12">
             <Table
-              columns={["Time", "Symbol", "Action", "Size", "Entry", "Exit", "PnL", "Status", "Reason"]}
+              columns={["Time", "Symbol", "Action", "Size", "Stake", "Entry", "Exit", "PnL", "Fee", "Status", "Reason"]}
               rows={trades.map((trade) => [
                 new Date(trade.timestamp).toLocaleString(),
                 trade.symbol,
                 trade.action,
                 trade.quantity ? trade.quantity.toFixed(4) : "-",
+                trade.quantity ? money(trade.quantity * trade.entry_price) : "-",
                 money(trade.entry_price),
                 trade.close_price ? money(trade.close_price) : "-",
                 trade.pnl === null ? "-" : money(trade.pnl),
+                money(trade.fee_approx),
                 trade.status,
                 trade.rejection_reason ?? trade.notes ?? "-",
               ])}
@@ -407,6 +492,98 @@ export default function DashboardPage() {
       </div>
     </main>
   );
+}
+
+function PnlChart({ points }: { points: Array<{ label: string; value: number }> }) {
+  if (!points.length) {
+    return <Empty loading={false} text="PnL graph appears after paper trades are opened or closed." />;
+  }
+
+  const width = 720;
+  const height = 220;
+  const padding = 24;
+  const values = points.map((point) => point.value);
+  const min = Math.min(...values, 0);
+  const max = Math.max(...values, 0);
+  const span = Math.max(max - min, 1);
+  const step = points.length > 1 ? (width - padding * 2) / (points.length - 1) : 0;
+  const coords = points.map((point, index) => {
+    const x = padding + index * step;
+    const y = height - padding - ((point.value - min) / span) * (height - padding * 2);
+    return { x, y };
+  });
+  const line = coords.map((coord) => `${coord.x},${coord.y}`).join(" ");
+  const zeroY = height - padding - ((0 - min) / span) * (height - padding * 2);
+  const latest = points[points.length - 1].value;
+
+  return (
+    <div>
+      <div className="mb-2 flex items-center justify-between gap-3 text-sm">
+        <span className="inline-flex items-center gap-2 font-semibold text-ink"><Activity size={16} /> Paper PnL curve</span>
+        <span className={latest < 0 ? "font-semibold text-red-700" : "font-semibold text-emerald-700"}>{money(latest)}</span>
+      </div>
+      <svg className="h-[220px] w-full rounded border border-line bg-panel" viewBox={`0 0 ${width} ${height}`} role="img" aria-label="Paper PnL graph">
+        <line x1={padding} y1={zeroY} x2={width - padding} y2={zeroY} stroke="#94a3b8" strokeDasharray="4 4" />
+        <polyline fill="none" stroke={latest < 0 ? "#b91c1c" : "#0f766e"} strokeWidth="3" points={line} />
+        {coords.map((coord, index) => (
+          <circle key={`${coord.x}-${coord.y}-${index}`} cx={coord.x} cy={coord.y} r="3" fill={points[index].value < 0 ? "#b91c1c" : "#0f766e"} />
+        ))}
+      </svg>
+      <div className="mt-2 flex justify-between text-xs text-slate-500">
+        <span>{points[0].label}</span>
+        <span>{points[points.length - 1].label}</span>
+      </div>
+    </div>
+  );
+}
+
+function buildPnlSeries(trades: Trade[], unrealizedPnl: number): Array<{ label: string; value: number }> {
+  const chronological = [...trades]
+    .filter((trade) => trade.status.startsWith("CLOSED") && typeof trade.pnl === "number")
+    .reverse();
+  let cumulative = 0;
+  const points = chronological.map((trade) => {
+    cumulative += trade.pnl ?? 0;
+    return {
+      label: new Date(trade.timestamp).toLocaleTimeString(),
+      value: Number(cumulative.toFixed(2)),
+    };
+  });
+
+  if (unrealizedPnl !== 0 || points.length) {
+    points.push({ label: "Live", value: Number((cumulative + unrealizedPnl).toFixed(2)) });
+  }
+
+  return points;
+}
+
+function buildActivityRows(suggestions: Suggestion[], positions: Position[], trades: Trade[]) {
+  const suggested = suggestions.slice(0, 5).map((suggestion) => ({
+    id: `suggestion-${suggestion.id}`,
+    action: suggestion.action,
+    symbol: suggestion.symbol,
+    label: `Suggested stake, awaiting approval`,
+    stake: suggestion.quantity * suggestion.entryPrice,
+  }));
+  const open = positions.slice(0, 5).map((position) => ({
+    id: `position-${position.id}`,
+    action: position.side === "LONG" ? "BUY" as const : "SELL" as const,
+    symbol: position.symbol,
+    label: `Open ${position.side.toLowerCase()} position`,
+    stake: position.quantity * position.currentPrice,
+  }));
+  const recent = trades
+    .filter((trade) => trade.action === "BUY" || trade.action === "SELL")
+    .slice(0, 5)
+    .map((trade) => ({
+      id: `trade-${trade.id}`,
+      action: trade.action as "BUY" | "SELL",
+      symbol: trade.symbol,
+      label: trade.status,
+      stake: trade.quantity * trade.entry_price,
+    }));
+
+  return [...suggested, ...open, ...recent].slice(0, 8);
 }
 
 function Panel({ title, children, className = "" }: { title: string; children: React.ReactNode; className?: string }) {

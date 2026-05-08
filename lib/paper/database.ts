@@ -103,10 +103,19 @@ export function isKillSwitchActive(): boolean {
 
 export function activateKillSwitch(): void {
   setSystemState("KILL_SWITCH", "true");
+  setBotRunning(false);
 }
 
 export function deactivateKillSwitch(): void {
   setSystemState("KILL_SWITCH", "false");
+}
+
+export function isBotRunning(): boolean {
+  return getSystemState("BOT_RUNNING") === "true";
+}
+
+export function setBotRunning(active: boolean): void {
+  setSystemState("BOT_RUNNING", active ? "true" : "false");
 }
 
 export function resetDailyLossIfNeeded(now = new Date()): void {
@@ -166,5 +175,10 @@ function ensureSchema(db: Database.Database): void {
   const killSwitch = db.prepare("SELECT key FROM system_state WHERE key = 'KILL_SWITCH'").get();
   if (!killSwitch) {
     db.prepare("INSERT INTO system_state (key, value) VALUES ('KILL_SWITCH', 'false')").run();
+  }
+
+  const botRunning = db.prepare("SELECT key FROM system_state WHERE key = 'BOT_RUNNING'").get();
+  if (!botRunning) {
+    db.prepare("INSERT INTO system_state (key, value) VALUES ('BOT_RUNNING', 'false')").run();
   }
 }

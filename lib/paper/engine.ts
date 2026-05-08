@@ -1,7 +1,7 @@
 import { activateKillSwitch, closePaperTrade, getOpenPaperTrades, getPaperAccount, insertPaperTrade, isKillSwitchActive, updatePaperAccount } from "./database";
 import type { ExecutePaperTradeInput, PaperTrade, RejectedTradeInput } from "./types";
 
-const FEE_RATE = 0.001;
+export const PAPER_TRANSACTION_FEE = 1;
 
 export function executePaperTrade(input: ExecutePaperTradeInput): PaperTrade {
   if (isKillSwitchActive()) {
@@ -17,8 +17,7 @@ export function executePaperTrade(input: ExecutePaperTradeInput): PaperTrade {
     });
   }
 
-  const notional = input.quantity * input.entryPrice;
-  const openingFee = roundMoney(notional * FEE_RATE);
+  const openingFee = PAPER_TRANSACTION_FEE;
   const account = getPaperAccount();
 
   updatePaperAccount({
@@ -80,7 +79,7 @@ export function applyPriceUpdate(symbol: string, currentPrice: number): PaperTra
       trade.action === "BUY"
         ? (currentPrice - trade.entry_price) * trade.quantity
         : (trade.entry_price - currentPrice) * trade.quantity;
-    const closingFee = Math.abs(currentPrice * trade.quantity) * FEE_RATE;
+    const closingFee = PAPER_TRANSACTION_FEE;
     const netPnl = roundMoney(grossPnl - closingFee);
     const status = hitTakeProfit ? "CLOSED_TP" : "CLOSED_SL";
     const account = getPaperAccount();

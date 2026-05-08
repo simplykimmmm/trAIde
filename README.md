@@ -71,6 +71,10 @@ The kill switch writes `KILL_SWITCH=true` into SQLite and blocks new trade activ
 
 Aggressive simulation is available through `PAPER_EXPOSURE_MULTIPLIER` and `ALLOW_LEVERAGE=true`, but only for paper mode. The risk engine caps stop-loss risk to `MAX_ACCOUNT_RISK_PCT` of account equity and refuses live leveraged trades.
 
+Paper trades use a flat `$1` transaction fee on open and another `$1` fee on close. The dashboard shows stake/notional, fees paid, realized PnL, unrealized PnL, and a paper PnL graph.
+
+The Start button enables a local paper-bot refresh loop that updates suggestions every 30 seconds. It does not auto-approve trades; manual approval is still required. The kill switch pauses the loop immediately.
+
 ## eToro Public API
 
 The app can use the official eToro Public API for read-only market quotes when both `ETORO_PUBLIC_KEY` and `ETORO_USER_KEY` are present and `USE_REAL_ETORO=true`.

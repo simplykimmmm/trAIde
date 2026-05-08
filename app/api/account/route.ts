@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { getMarketDataProvider } from "@/lib/market";
 import { getRiskConfig } from "@/lib/risk/config";
-import { getOpenPaperTrades, getPaperAccount, isKillSwitchActive } from "@/lib/paper/database";
+import { getOpenPaperTrades, getPaperAccount, isBotRunning, isKillSwitchActive } from "@/lib/paper/database";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -17,6 +17,7 @@ export async function GET() {
     marketDataProvider: getMarketDataProvider(),
     liveTradingEnabled: process.env.LIVE_TRADING === "true",
     killSwitchActive: isKillSwitchActive(),
+    botRunning: isBotRunning(),
     account: {
       accountId: "paper-local",
       currency: "USD",
