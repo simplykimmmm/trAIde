@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Activity, AlertTriangle, Check, Pause, Play, Power, RefreshCw, ShieldAlert, ShieldCheck, X } from "lucide-react";
+import { Activity, AlertTriangle, Check, ListChecks, Pause, Play, Power, RefreshCw, ShieldAlert, ShieldCheck, X } from "lucide-react";
 
 type Mode = "paper" | "live";
 
@@ -51,6 +51,7 @@ type Position = {
   unrealizedPnl: number;
   stopLoss: number;
   takeProfit: number;
+  openedAt: string;
 };
 
 type Analysis = {
@@ -111,6 +112,7 @@ export default function DashboardPage() {
   const [draftRiskMultiplier, setDraftRiskMultiplier] = useState(5);
 
   const activityRows = useMemo(() => buildActivityRows(suggestions, positions, trades), [positions, suggestions, trades]);
+  const allMoves = useMemo(() => buildAllMoves(suggestions, positions, analyses, trades), [analyses, positions, suggestions, trades]);
   const realizedPnl = useMemo(() => trades.reduce((sum, trade) => sum + (trade.status.startsWith("CLOSED") ? trade.pnl ?? 0 : 0), 0), [trades]);
   const unrealizedPnl = useMemo(() => positions.reduce((sum, position) => sum + position.unrealizedPnl, 0), [positions]);
   const totalFees = useMemo(() => trades.reduce((sum, trade) => sum + (trade.fee_approx || 0), 0), [trades]);
@@ -549,6 +551,35 @@ export default function DashboardPage() {
             </div>
           </Panel>
 
+          <Panel title="All Moves" className="lg:col-span-12">
+            <div className="max-h-[520px] overflow-y-auto pr-1">
+              <div className="space-y-2">
+                {allMoves.map((move) => (
+                  <div key={move.id} className="grid gap-3 border-b border-line pb-3 last:border-0 md:grid-cols-[160px_110px_1fr_130px_110px] md:items-center">
+                    <div className="text-xs text-slate-500">{move.time}</div>
+                    <MoveBadge type={move.type} />
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="font-semibold text-ink">{move.symbol}</span>
+                        {move.action ? <SignalBadge action={move.action} /> : null}
+                        {typeof move.confidence === "number" ? <span className="text-xs text-slate-500">{percent(move.confidence)} confidence</span> : null}
+                      </div>
+                      <div className="mt-1 truncate text-sm text-slate-600">{move.reason}</div>
+                    </div>
+                    <div className="text-sm text-slate-700">
+                      <div>Stake {money(move.stake)}</div>
+                      {typeof move.fee === "number" && move.fee > 0 ? <div className="text-xs text-slate-500">Fee {money(move.fee)}</div> : null}
+                    </div>
+                    <div className={move.pnl && move.pnl < 0 ? "text-sm font-semibold text-red-700" : "text-sm font-semibold text-emerald-700"}>
+                      {typeof move.pnl === "number" ? money(move.pnl) : "-"}
+                    </div>
+                  </div>
+                ))}
+                {!allMoves.length ? <Empty loading={loading} text="No bot moves yet." /> : null}
+              </div>
+            </div>
+          </Panel>
+
           <Panel title="Trade Log" className="lg:col-span-12">
             <Table
               columns={["Time", "Symbol", "Action", "Size", "Stake", "Entry", "Exit", "PnL", "Fee", "Status", "Reason"]}
@@ -664,6 +695,116 @@ function buildActivityRows(suggestions: Suggestion[], positions: Position[], tra
     }));
 
   return [...suggested, ...open, ...recent].slice(0, 8);
+}
+
+type MoveType = "SUGGESTED" | "OPEN" | "CLOSED" | "REJECTED" | "ANALYSIS";
+
+type Move = {
+  id: string;
+  timestampMs: number;
+  time: string;
+  type: MoveType;
+  symbol: string;
+  action?: "BUY" | "SELL" | "HOLD";
+  stake?: number;
+  pnl?: number;
+  fee?: number;
+  confidence?: number;
+  reason: string;
+};
+
+function buildAllMoves(suggestions: Suggestion[], positions: Position[], analyses: Analysis[], trades: Trade[]): Move[] {
+  const now = Date.now();
+  const moves: Move[] = [];
+
+  for (const suggestion of suggestions) {
+    moves.push({
+      id: `suggestion-${suggestion.id}`,
+      timestampMs: now,
+      time: "Now",
+      type: "SUGGESTED",
+      symbol: suggestion.symbol,
+      action: suggestion.action,
+      stake: suggestion.quantity * suggestion.entryPrice,
+      confidence: suggestion.confidence,
+      reason: `Risk passed. ${suggestion.reasoning}`,
+    });
+  }
+
+  for (const position of positions) {
+    moves.push({
+      id: `position-${position.id}`,
+      timestampMs: new Date(position.openedAt).getTime(),
+      time: formatMoveTime(position.openedAt),
+      type: "OPEN",
+      symbol: position.symbol,
+      action: position.side === "LONG" ? "BUY" : "SELL",
+      stake: position.quantity * position.currentPrice,
+      pnl: position.unrealizedPnl,
+      reason: `Open ${position.side.toLowerCase()} position. Stop ${money(position.stopLoss)}, target ${money(position.takeProfit)}.`,
+    });
+  }
+
+  for (const trade of trades) {
+    const type: MoveType = trade.status === "REJECTED" ? "REJECTED" : trade.status.startsWith("CLOSED") ? "CLOSED" : "OPEN";
+    moves.push({
+      id: `trade-${trade.id}`,
+      timestampMs: new Date(trade.timestamp).getTime(),
+      time: formatMoveTime(trade.timestamp),
+      type,
+      symbol: trade.symbol,
+      action: trade.action === "BUY" || trade.action === "SELL" || trade.action === "HOLD" ? trade.action : undefined,
+      stake: trade.quantity * trade.entry_price,
+      pnl: trade.pnl ?? undefined,
+      fee: trade.fee_approx,
+      confidence: trade.ai_confidence ?? undefined,
+      reason: trade.rejection_reason ?? trade.notes ?? trade.status,
+    });
+  }
+
+  for (const analysis of analyses) {
+    moves.push({
+      id: `analysis-${analysis.symbol}`,
+      timestampMs: now - 1,
+      time: "Now",
+      type: "ANALYSIS",
+      symbol: analysis.symbol,
+      action: analysis.action,
+      stake: analysis.lastPrice,
+      confidence: analysis.confidence,
+      reason: analysis.error ? `Analysis error: ${analysis.error}` : analysis.reasoning,
+    });
+  }
+
+  return moves
+    .filter((move) => Number.isFinite(move.timestampMs))
+    .sort((a, b) => b.timestampMs - a.timestampMs)
+    .slice(0, 100);
+}
+
+function formatMoveTime(timestamp: string): string {
+  const parsed = new Date(timestamp);
+  if (Number.isNaN(parsed.getTime())) {
+    return "-";
+  }
+
+  return parsed.toLocaleString();
+}
+
+function MoveBadge({ type }: { type: MoveType }) {
+  const styles: Record<MoveType, string> = {
+    SUGGESTED: "bg-blue-100 text-blue-800",
+    OPEN: "bg-emerald-100 text-emerald-800",
+    CLOSED: "bg-slate-100 text-slate-800",
+    REJECTED: "bg-red-100 text-red-800",
+    ANALYSIS: "bg-amber-100 text-amber-900",
+  };
+
+  return (
+    <span className={`inline-flex w-fit items-center gap-1 rounded px-2 py-1 text-xs font-bold ${styles[type]}`}>
+      <ListChecks size={13} /> {type}
+    </span>
+  );
 }
 
 function minutesToSpeedLevel(minutes: number): number {
