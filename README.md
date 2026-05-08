@@ -79,10 +79,18 @@ MAX_DAILY_LOSS_PCT=1
 MAX_ACCOUNT_RISK_PCT=1
 OPPORTUNITY_SCANNER=true
 OPPORTUNITY_UNIVERSE=SPY,QQQ,AAPL,MSFT,GOOGL,AMZN,AMD,COIN,META,NVDA,PLTR,SOFI,TSLA,BTC/USD,ETH/USD,SOL/USD,DOGE/USD
-OPPORTUNITY_LIMIT=8
-OPPORTUNITY_MAX_SCAN_SYMBOLS=18
-OPPORTUNITY_MIN_SCORE=22
+OPPORTUNITY_LIMIT=15
+OPPORTUNITY_MAX_SCAN_SYMBOLS=35
+OPPORTUNITY_MIN_SCORE=12
 WEEKEND_CRYPTO_ONLY=true
+MAX_RISK_PER_TRADE_PCT=0.05
+MAX_DAILY_LOSS_PCT=1
+MAX_OPEN_POSITIONS=25
+MIN_AI_CONFIDENCE=0.5
+ALLOW_LEVERAGE=true
+ALLOW_SHORT_SELLING=false
+PAPER_EXPOSURE_MULTIPLIER=20
+MAX_ACCOUNT_RISK_PCT=1
 ```
 
 If the deployed header says `DATA: MOCK`, `FINNHUB_API_KEY` is missing or unavailable in that Vercel environment. If it says `BOT: PAUSED`, click Start in the dashboard. SQLite storage on Vercel serverless is ephemeral, so bot state and paper trades can reset; use a hosted database before relying on deployed persistence.
@@ -95,7 +103,7 @@ For live or delayed quote data, set `FINNHUB_API_KEY` in `.env.local`. Without i
 
 The kill switch writes `KILL_SWITCH=true` into SQLite and blocks new trade activity. When halted, the dashboard shows an explicit Un-halt button that clears the local paper-trading halt state.
 
-Aggressive simulation is available through `PAPER_EXPOSURE_MULTIPLIER` and `ALLOW_LEVERAGE=true`, but only for paper mode. The risk engine caps stop-loss risk to `MAX_ACCOUNT_RISK_PCT` of account equity and refuses live leveraged trades.
+Aggressive simulation is available through `PAPER_EXPOSURE_MULTIPLIER` and `ALLOW_LEVERAGE=true`, but only for paper mode. The aggressive paper preset can scan more symbols, hold up to 25 open paper positions, and use much larger simulated exposure. The risk engine still caps stop-loss risk to `MAX_ACCOUNT_RISK_PCT` of account equity and refuses live leveraged trades.
 
 Paper trades use a flat `$1` transaction fee on open and another `$1` fee on close. The dashboard shows stake/notional, fees paid, realized PnL, unrealized PnL, and a paper PnL graph.
 

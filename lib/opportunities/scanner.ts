@@ -78,7 +78,7 @@ export function buildOpportunityAnalysis(candidate: OpportunityCandidate): AIAna
     suggested_entry: Number(last.toFixed(4)),
     suggested_stop_loss: Number((last * (1 - stopPct)).toFixed(4)),
     suggested_take_profit: Number((last * (1 + takeProfitPct)).toFixed(4)),
-    max_risk_pct: candidate.regime === "HIGH_VOLATILITY" ? 0.005 : 0.01,
+    max_risk_pct: candidate.regime === "HIGH_VOLATILITY" ? 0.025 : 0.05,
   };
 }
 

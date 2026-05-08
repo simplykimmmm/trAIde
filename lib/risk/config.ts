@@ -33,8 +33,8 @@ export function getEffectivePaperRiskConfig(): RiskConfig {
 
   return {
     ...base,
-    maxRiskPerTradePct: Math.min(base.maxRiskPerTradePct * botSettings.riskMultiplier, 0.05),
-    paperExposureMultiplier: Math.min(base.paperExposureMultiplier * botSettings.speedMultiplier, 20),
+    maxRiskPerTradePct: Math.min(base.maxRiskPerTradePct * botSettings.riskMultiplier, 0.25),
+    paperExposureMultiplier: Math.min(base.paperExposureMultiplier * botSettings.speedMultiplier, 100),
   };
 }
 
