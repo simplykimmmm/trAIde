@@ -29,7 +29,11 @@ const NEWS_SYMBOL_PATTERN = /^[A-Z][A-Z0-9.:-]{0,11}$/;
 
 export async function scanOpportunities(limit = getOpportunityLimit()): Promise<OpportunityCandidate[]> {
   const finnhub = new FinnhubAdapter();
-  const newsBySymbol = finnhub.enabled ? await safeLoadNews(finnhub) : new Map<string, FinnhubNewsItem>();
+  if (!finnhub.enabled) {
+    return buildMockOpportunities(limit);
+  }
+
+  const newsBySymbol = await safeLoadNews(finnhub);
   const universe = uniqueSymbols([...newsBySymbol.keys(), ...getOpportunityUniverse(), ...getWatchlist()]).slice(0, getMaxScanSymbols());
   const candidates: OpportunityCandidate[] = [];
 
@@ -47,10 +51,6 @@ export async function scanOpportunities(limit = getOpportunityLimit()): Promise<
     } catch {
       // Unsupported symbols are skipped. The dashboard stays fail-closed instead of inventing data.
     }
-  }
-
-  if (!candidates.length && !finnhub.enabled) {
-    return buildMockOpportunities(limit);
   }
 
   return candidates
