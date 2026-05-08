@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { getEToroAdapter } from "@/lib/etoro";
 import type { TradeSide } from "@/lib/etoro/types";
+import { getEToroAdapter } from "@/lib/etoro";
+import { getMarketQuote } from "@/lib/market";
 import { getPaperAccount, getOpenPaperTrades, isKillSwitchActive } from "@/lib/paper/database";
 import { executePaperTrade, logRejectedTrade } from "@/lib/paper/engine";
 import { getEffectivePaperRiskConfig, getRiskConfig } from "@/lib/risk/config";
@@ -43,7 +44,7 @@ export async function POST(request: NextRequest) {
   }
 
   const adapter = getEToroAdapter();
-  const quote = await adapter.getQuote(body.symbol);
+  const quote = await getMarketQuote(body.symbol);
   const account = getPaperAccount();
   const riskConfig = body.mode === "paper" ? getEffectivePaperRiskConfig() : getRiskConfig();
   const risk = checkTradeAllowed({

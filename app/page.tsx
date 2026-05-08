@@ -83,6 +83,21 @@ type Suggestion = {
   confidence: number;
   reasoning: string;
   invalidationCondition: string;
+  source?: string;
+  scannerScore?: number;
+};
+
+type Opportunity = {
+  symbol: string;
+  source: "NEWS" | "VOLATILITY" | "DROP_BOUNCE" | "MOCK";
+  score: number;
+  lastPrice: number;
+  priceChangePct: number;
+  volatilityPct: number;
+  recentMovePct?: number;
+  headline?: string;
+  reason: string;
+  generatedAt: string;
 };
 
 type Trade = {
@@ -110,6 +125,7 @@ export default function DashboardPage() {
   const [account, setAccount] = useState<AccountResponse | null>(null);
   const [positions, setPositions] = useState<Position[]>([]);
   const [analyses, setAnalyses] = useState<Analysis[]>([]);
+  const [opportunities, setOpportunities] = useState<Opportunity[]>([]);
   const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
   const [trades, setTrades] = useState<Trade[]>([]);
   const [loading, setLoading] = useState(true);
@@ -137,10 +153,11 @@ export default function DashboardPage() {
     setLoading(true);
     setMessage(null);
     try {
-      const [accountRes, positionsRes, analysisRes, suggestRes, tradesRes] = await Promise.all([
+      const [accountRes, positionsRes, analysisRes, opportunitiesRes, suggestRes, tradesRes] = await Promise.all([
         fetch("/api/account", { cache: "no-store" }),
         fetch("/api/positions", { cache: "no-store" }),
         fetch("/api/analysis", { cache: "no-store" }),
+        fetch("/api/opportunities", { cache: "no-store" }),
         fetch(`/api/suggest?mode=${mode}`, { cache: "no-store" }),
         fetch("/api/paper-trades", { cache: "no-store" }),
       ]);
@@ -148,6 +165,7 @@ export default function DashboardPage() {
       setAccount(await accountRes.json());
       setPositions((await positionsRes.json()).positions ?? []);
       setAnalyses((await analysisRes.json()).analyses ?? []);
+      setOpportunities((await opportunitiesRes.json()).opportunities ?? []);
       setSuggestions((await suggestRes.json()).suggestions ?? []);
       setTrades((await tradesRes.json()).trades ?? []);
     } catch {
@@ -460,6 +478,30 @@ export default function DashboardPage() {
             </div>
           </Panel>
 
+          <Panel title="Opportunity Scanner" className="lg:col-span-8">
+            <div className="space-y-2">
+              {opportunities.map((opportunity) => (
+                <div key={`${opportunity.symbol}-${opportunity.source}`} className="grid gap-3 border-b border-line pb-2 last:border-0 md:grid-cols-[110px_110px_1fr_110px_110px] md:items-center">
+                  <div>
+                    <div className="font-semibold text-ink">{opportunity.symbol}</div>
+                    <div className="text-xs text-slate-500">{money(opportunity.lastPrice)}</div>
+                  </div>
+                  <MoveBadge type={opportunity.source === "DROP_BOUNCE" ? "SCALP" : opportunity.source} />
+                  <div className="min-w-0">
+                    <div className="truncate text-sm text-slate-700">{opportunity.reason}</div>
+                    {opportunity.headline ? <div className="truncate text-xs text-slate-500">{opportunity.headline}</div> : null}
+                  </div>
+                  <div className={opportunity.priceChangePct < 0 ? "text-sm font-semibold text-red-700" : "text-sm font-semibold text-emerald-700"}>
+                    {percent(opportunity.priceChangePct)}
+                  </div>
+                  <div className="text-sm font-semibold text-ink">Score {opportunity.score}</div>
+                </div>
+              ))}
+              {!opportunities.length ? <Empty loading={loading} text="No scanner candidates yet." /> : null}
+            </div>
+            <div className="mt-3 text-xs text-slate-500">Scanner uses news and volatility to find paper-trading candidates. It is not a profit guarantee.</div>
+          </Panel>
+
           <Panel title="Live Buy / Sell Activity" className="lg:col-span-4">
             <div className="space-y-2">
               {activityRows.map((row) => (
@@ -527,10 +569,10 @@ export default function DashboardPage() {
 
           <Panel title="Suggested Trades" className="lg:col-span-12">
             <div className="overflow-x-auto">
-              <table className="w-full min-w-[980px] border-collapse text-sm">
+              <table className="w-full min-w-[1080px] border-collapse text-sm">
                 <thead>
                   <tr className="border-b border-line text-left text-xs uppercase text-slate-500">
-                    {["Symbol", "Action", "Size", "Stake", "Entry", "Stop", "Target", "Risk", "Confidence", ""].map((heading) => (
+                    {["Symbol", "Source", "Action", "Size", "Stake", "Entry", "Stop", "Target", "Risk", "Confidence", ""].map((heading) => (
                       <th key={heading} className="py-2 pr-3 font-semibold">{heading}</th>
                     ))}
                   </tr>
@@ -539,6 +581,7 @@ export default function DashboardPage() {
                   {suggestions.map((suggestion) => (
                     <tr key={suggestion.id} className="border-b border-line last:border-0">
                       <td className="py-2 pr-3 font-semibold">{suggestion.symbol}</td>
+                      <td className="py-2 pr-3 text-xs font-semibold text-slate-600">{suggestion.source ?? "WATCHLIST"}{suggestion.scannerScore ? ` ${suggestion.scannerScore}` : ""}</td>
                       <td className="py-2 pr-3"><SignalBadge action={suggestion.action} /></td>
                       <td className="py-2 pr-3">{suggestion.quantity.toFixed(4)}</td>
                       <td className="py-2 pr-3">{money(suggestion.quantity * suggestion.entryPrice)}</td>
@@ -722,7 +765,7 @@ function buildActivityRows(suggestions: Suggestion[], positions: Position[], tra
   return [...suggested, ...open, ...recent].slice(0, 8);
 }
 
-type MoveType = "SUGGESTED" | "OPEN" | "CLOSED" | "REJECTED" | "ANALYSIS";
+type MoveType = "SUGGESTED" | "OPEN" | "CLOSED" | "REJECTED" | "ANALYSIS" | "NEWS" | "VOLATILITY" | "SCALP" | "MOCK";
 
 type Move = {
   id: string;
@@ -823,6 +866,10 @@ function MoveBadge({ type }: { type: MoveType }) {
     CLOSED: "bg-slate-100 text-slate-800",
     REJECTED: "bg-red-100 text-red-800",
     ANALYSIS: "bg-amber-100 text-amber-900",
+    NEWS: "bg-blue-100 text-blue-800",
+    VOLATILITY: "bg-purple-100 text-purple-800",
+    SCALP: "bg-emerald-100 text-emerald-800",
+    MOCK: "bg-slate-100 text-slate-700",
   };
 
   return (

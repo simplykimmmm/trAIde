@@ -77,6 +77,11 @@ ALLOW_LEVERAGE=true
 PAPER_EXPOSURE_MULTIPLIER=5
 MAX_DAILY_LOSS_PCT=1
 MAX_ACCOUNT_RISK_PCT=1
+OPPORTUNITY_SCANNER=true
+OPPORTUNITY_UNIVERSE=SPY,QQQ,AAPL,MSFT,GOOGL,AMZN,AMD,COIN,META,NVDA,PLTR,SOFI,TSLA,BTC/USD,ETH/USD,SOL/USD,DOGE/USD
+OPPORTUNITY_LIMIT=8
+OPPORTUNITY_MAX_SCAN_SYMBOLS=18
+OPPORTUNITY_MIN_SCORE=22
 ```
 
 If the deployed header says `DATA: MOCK`, `FINNHUB_API_KEY` is missing or unavailable in that Vercel environment. If it says `BOT: PAUSED`, click Start in the dashboard. SQLite storage on Vercel serverless is ephemeral, so bot state and paper trades can reset; use a hosted database before relying on deployed persistence.
@@ -94,6 +99,12 @@ Aggressive simulation is available through `PAPER_EXPOSURE_MULTIPLIER` and `ALLO
 Paper trades use a flat `$1` transaction fee on open and another `$1` fee on close. The dashboard shows stake/notional, fees paid, realized PnL, unrealized PnL, and a paper PnL graph.
 
 The Start button enables a paper-bot refresh loop using the dashboard speed setting. It does not auto-approve trades; manual approval is still required. The kill switch pauses the loop immediately.
+
+## Opportunity Scanner
+
+The server-side opportunity scanner uses Finnhub quotes, market news, and recent candles when `FINNHUB_API_KEY` is configured. It ranks broader stock and crypto candidates from `OPPORTUNITY_UNIVERSE`, looks for news-linked symbols, high intraday volatility, and drop-bounce setups, then sends qualifying non-mock ideas through the same risk engine as watchlist trades.
+
+This is still an educational paper-trading feature. It cannot guarantee profit, it can be wrong or stale, and it does not bypass manual approval, the kill switch, max position limits, stale data checks, or live-trading locks.
 
 ## eToro Public API
 

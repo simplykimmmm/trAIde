@@ -8,8 +8,18 @@ const BASE_QUOTES: Record<string, number> = {
   AAPL: 182.74,
   MSFT: 414.56,
   GOOGL: 171.9,
+  AMZN: 184.2,
+  AMD: 156.7,
+  COIN: 214.4,
+  META: 492.8,
+  NVDA: 903.1,
+  PLTR: 24.7,
+  SOFI: 7.9,
+  TSLA: 176.3,
   "BTC/USD": 63750,
   "ETH/USD": 3125,
+  "DOGE/USD": 0.15,
+  "SOL/USD": 142.5,
 };
 
 function jitter(base: number, pct = 0.004): number {
@@ -66,6 +76,11 @@ export class MockEToroAdapter implements IEToroAdapter {
       last,
       timestamp: new Date().toISOString(),
       supported: true,
+      dayHigh: Number((last * 1.018).toFixed(4)),
+      dayLow: Number((last * 0.974).toFixed(4)),
+      dayOpen: Number((base * 0.992).toFixed(4)),
+      previousClose: base,
+      changePct: Number(((last - base) / base).toFixed(4)),
     };
   }
 

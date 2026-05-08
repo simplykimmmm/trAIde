@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { analyzeSymbol } from "@/lib/ai/analyzeSymbol";
-import { getEToroAdapter } from "@/lib/etoro";
 import type { TradeSide, TradingMode } from "@/lib/etoro/types";
 import { getMarketQuote } from "@/lib/market";
+import { buildOpportunityAnalysis, scanOpportunities } from "@/lib/opportunities/scanner";
 import { getPaperAccount, getOpenPaperTrades, isKillSwitchActive } from "@/lib/paper/database";
 import { logRejectedTrade } from "@/lib/paper/engine";
 import { getEffectivePaperRiskConfig, getRiskConfig } from "@/lib/risk/config";
@@ -19,6 +19,7 @@ export async function GET(request: NextRequest) {
   const config = tradingMode === "paper" ? getEffectivePaperRiskConfig() : getRiskConfig();
   const suggestions = [];
   const rejected = [];
+  const suggestedSymbols = new Set<string>();
 
   for (const symbol of getWatchlist()) {
     try {
@@ -67,13 +68,83 @@ export async function GET(request: NextRequest) {
           reasoning: analysis.reasoning,
           invalidationCondition: analysis.invalidation_condition,
           quoteTimestamp: quote.timestamp,
+          source: "WATCHLIST",
         });
+        suggestedSymbols.add(symbol);
       } else {
         rejected.push({ symbol, action: analysis.action, risk });
         maybeLogRiskRejection(symbol, analysis.action, analysis.suggested_entry, analysis.suggested_stop_loss, analysis.suggested_take_profit, analysis.confidence, risk);
       }
     } catch (error) {
       rejected.push({ symbol, error: error instanceof Error ? error.message : "Unknown suggestion error" });
+    }
+  }
+
+  if (process.env.OPPORTUNITY_SCANNER !== "false") {
+    const opportunities = await scanOpportunities();
+
+    for (const opportunity of opportunities) {
+      if (opportunity.source === "MOCK" || suggestedSymbols.has(opportunity.symbol)) {
+        continue;
+      }
+
+      try {
+        const quote = await getMarketQuote(opportunity.symbol);
+        const analysis = buildOpportunityAnalysis(opportunity);
+
+        if (analysis.action === "HOLD") {
+          continue;
+        }
+
+        const paperAccount = getPaperAccount();
+        const openPositions = getOpenPaperTrades();
+        const risk = checkTradeAllowed({
+          killSwitchActive: isKillSwitchActive(),
+          tradingMode,
+          liveTradingEnabled: process.env.LIVE_TRADING === "true",
+          analysis,
+          quote,
+          account: {
+            equity: paperAccount.equity,
+            availableCash: paperAccount.balance,
+            dailyLoss: paperAccount.daily_loss,
+          },
+          openPositionsCount: openPositions.length,
+          candidate: {
+            symbol: opportunity.symbol,
+            side: analysis.action as TradeSide,
+            entryPrice: analysis.suggested_entry,
+            stopLoss: analysis.suggested_stop_loss,
+            takeProfit: analysis.suggested_take_profit,
+          },
+          config,
+        });
+
+        if (risk.allowed) {
+          suggestions.push({
+            id: makeSuggestionId(opportunity.symbol, analysis.action, `${quote.timestamp}:${opportunity.source}:${opportunity.score}`),
+            symbol: opportunity.symbol,
+            action: analysis.action,
+            quantity: risk.positionSize,
+            entryPrice: analysis.suggested_entry,
+            stopLoss: analysis.suggested_stop_loss,
+            takeProfit: analysis.suggested_take_profit,
+            riskAmount: risk.riskAmount,
+            confidence: analysis.confidence,
+            reasoning: analysis.reasoning,
+            invalidationCondition: analysis.invalidation_condition,
+            quoteTimestamp: quote.timestamp,
+            source: opportunity.source,
+            scannerScore: opportunity.score,
+          });
+          suggestedSymbols.add(opportunity.symbol);
+        } else {
+          rejected.push({ symbol: opportunity.symbol, action: analysis.action, source: opportunity.source, risk });
+          maybeLogRiskRejection(opportunity.symbol, analysis.action as TradeSide, analysis.suggested_entry, analysis.suggested_stop_loss, analysis.suggested_take_profit, analysis.confidence, risk);
+        }
+      } catch (error) {
+        rejected.push({ symbol: opportunity.symbol, source: opportunity.source, error: error instanceof Error ? error.message : "Unknown scanner suggestion error" });
+      }
     }
   }
 

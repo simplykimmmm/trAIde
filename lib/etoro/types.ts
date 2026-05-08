@@ -33,6 +33,11 @@ export type MarketQuote = {
   last: number;
   timestamp: string;
   supported: boolean;
+  dayHigh?: number;
+  dayLow?: number;
+  dayOpen?: number;
+  previousClose?: number;
+  changePct?: number;
 };
 
 export type OrderRequest = {
