@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getMarketDataProvider } from "@/lib/market";
+import { getTradingSession } from "@/lib/market/session";
 import { getEffectivePaperRiskConfig } from "@/lib/risk/config";
 import { getBotSettings, getOpenPaperTrades, getPaperAccount, isBotRunning, isKillSwitchActive } from "@/lib/paper/database";
 
@@ -15,6 +16,7 @@ export async function GET() {
   const hasFinnhubKey = Boolean(process.env.FINNHUB_API_KEY);
   const hasGeminiKey = Boolean(process.env.GEMINI_API_KEY);
   const botRunning = isBotRunning();
+  const session = getTradingSession();
   const deploymentWarnings = [
     !hasFinnhubKey ? "FINNHUB_API_KEY is missing in this deployment, so market data falls back to mock quotes." : null,
     !hasGeminiKey ? "GEMINI_API_KEY is missing in this deployment, so AI analysis falls back to cautious mock HOLD responses." : null,
@@ -29,6 +31,7 @@ export async function GET() {
     killSwitchActive: isKillSwitchActive(),
     botRunning,
     botSettings: getBotSettings(),
+    session,
     deployment: {
       host: isVercel ? "vercel" : "local",
       hasFinnhubKey,

@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { analyzeSymbol } from "@/lib/ai/analyzeSymbol";
 import type { AIAnalysis } from "@/lib/ai/types";
 import { getMarketQuote } from "@/lib/market";
+import { filterSymbolsForSession, getTradingSession } from "@/lib/market/session";
 import { getWatchlist } from "@/lib/watchlist";
 
 export const runtime = "nodejs";
@@ -12,7 +13,9 @@ type AnalysisRow = AIAnalysis & { error?: string; quoteTimestamp?: string; lastP
 export async function GET() {
   const rows: AnalysisRow[] = [];
 
-  for (const symbol of getWatchlist()) {
+  const session = getTradingSession();
+
+  for (const symbol of filterSymbolsForSession(getWatchlist())) {
     let lastPrice: number | undefined;
     let quoteTimestamp: string | undefined;
 
@@ -40,5 +43,5 @@ export async function GET() {
     }
   }
 
-  return NextResponse.json({ analyses: rows });
+  return NextResponse.json({ analyses: rows, session });
 }

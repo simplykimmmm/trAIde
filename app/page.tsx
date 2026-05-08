@@ -16,6 +16,11 @@ type AccountResponse = {
     speedMultiplier: number;
     riskMultiplier: number;
   };
+  session: {
+    cryptoOnly: boolean;
+    label: "REGULAR_ASSET_SCAN" | "WEEKEND_CRYPTO_ONLY";
+    reason: string;
+  };
   deployment: {
     host: "local" | "vercel";
     hasFinnhubKey: boolean;
@@ -95,6 +100,12 @@ type Opportunity = {
   priceChangePct: number;
   volatilityPct: number;
   recentMovePct?: number;
+  rsi2?: number;
+  rsi14?: number;
+  atrPct?: number;
+  trendPct?: number;
+  regime?: string;
+  cryptoOnlySession?: boolean;
   headline?: string;
   reason: string;
   generatedAt: string;
@@ -306,6 +317,11 @@ export default function DashboardPage() {
             <span className="rounded bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-700">
               DATA: {account?.marketDataProvider === "finnhub" ? "FINNHUB" : "MOCK"}
             </span>
+            {account?.session.cryptoOnly ? (
+              <span className="rounded bg-indigo-100 px-2.5 py-1 text-xs font-semibold text-indigo-800">
+                SESSION: CRYPTO WEEKEND
+              </span>
+            ) : null}
             <span className={`rounded px-2.5 py-1 text-xs font-semibold ${botRunning ? "bg-emerald-100 text-emerald-800" : "bg-slate-100 text-slate-700"}`}>
               BOT: {botRunning ? "RUNNING" : "PAUSED"}
             </span>
@@ -489,6 +505,11 @@ export default function DashboardPage() {
                   <MoveBadge type={opportunity.source === "DROP_BOUNCE" ? "SCALP" : opportunity.source} />
                   <div className="min-w-0">
                     <div className="truncate text-sm text-slate-700">{opportunity.reason}</div>
+                    <div className="truncate text-xs text-slate-500">
+                      {opportunity.regime ? `Regime ${opportunity.regime}` : "Regime unconfirmed"}
+                      {typeof opportunity.rsi2 === "number" ? `, RSI-2 ${opportunity.rsi2}` : ""}
+                      {typeof opportunity.atrPct === "number" ? `, ATR ${percent(opportunity.atrPct)}` : ""}
+                    </div>
                     {opportunity.headline ? <div className="truncate text-xs text-slate-500">{opportunity.headline}</div> : null}
                   </div>
                   <div className={opportunity.priceChangePct < 0 ? "text-sm font-semibold text-red-700" : "text-sm font-semibold text-emerald-700"}>
@@ -499,7 +520,10 @@ export default function DashboardPage() {
               ))}
               {!opportunities.length ? <Empty loading={loading} text="No scanner candidates yet." /> : null}
             </div>
-            <div className="mt-3 text-xs text-slate-500">Scanner uses news and volatility to find paper-trading candidates. It is not a profit guarantee.</div>
+            <div className="mt-3 text-xs text-slate-500">
+              {account?.session.cryptoOnly ? "Weekend/off-session mode is active: new scanner ideas are crypto-only. " : ""}
+              Scanner uses news, volatility, RSI, ATR, and regime filters to find paper-trading candidates. It is not a profit guarantee.
+            </div>
           </Panel>
 
           <Panel title="Live Buy / Sell Activity" className="lg:col-span-4">

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { analyzeSymbol } from "@/lib/ai/analyzeSymbol";
 import type { TradeSide, TradingMode } from "@/lib/etoro/types";
 import { getMarketQuote } from "@/lib/market";
+import { filterSymbolsForSession, getTradingSession } from "@/lib/market/session";
 import { buildOpportunityAnalysis, scanOpportunities } from "@/lib/opportunities/scanner";
 import { getPaperAccount, getOpenPaperTrades, isKillSwitchActive } from "@/lib/paper/database";
 import { logRejectedTrade } from "@/lib/paper/engine";
@@ -17,11 +18,12 @@ export async function GET(request: NextRequest) {
   const url = new URL(request.url);
   const tradingMode = (url.searchParams.get("mode") === "live" ? "live" : "paper") satisfies TradingMode;
   const config = tradingMode === "paper" ? getEffectivePaperRiskConfig() : getRiskConfig();
+  const session = getTradingSession();
   const suggestions = [];
   const rejected = [];
   const suggestedSymbols = new Set<string>();
 
-  for (const symbol of getWatchlist()) {
+  for (const symbol of filterSymbolsForSession(getWatchlist())) {
     try {
       const quote = await getMarketQuote(symbol);
       const analysis = await analyzeSymbol(symbol, quote);
@@ -151,6 +153,7 @@ export async function GET(request: NextRequest) {
   return NextResponse.json({
     suggestions,
     rejected,
+    session,
     generatedAt: new Date().toISOString(),
   });
 }

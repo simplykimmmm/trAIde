@@ -82,6 +82,7 @@ OPPORTUNITY_UNIVERSE=SPY,QQQ,AAPL,MSFT,GOOGL,AMZN,AMD,COIN,META,NVDA,PLTR,SOFI,T
 OPPORTUNITY_LIMIT=8
 OPPORTUNITY_MAX_SCAN_SYMBOLS=18
 OPPORTUNITY_MIN_SCORE=22
+WEEKEND_CRYPTO_ONLY=true
 ```
 
 If the deployed header says `DATA: MOCK`, `FINNHUB_API_KEY` is missing or unavailable in that Vercel environment. If it says `BOT: PAUSED`, click Start in the dashboard. SQLite storage on Vercel serverless is ephemeral, so bot state and paper trades can reset; use a hosted database before relying on deployed persistence.
@@ -102,7 +103,9 @@ The Start button enables a paper-bot refresh loop using the dashboard speed sett
 
 ## Opportunity Scanner
 
-The server-side opportunity scanner uses Finnhub quotes, market news, and recent candles when `FINNHUB_API_KEY` is configured. It ranks broader stock and crypto candidates from `OPPORTUNITY_UNIVERSE`, looks for news-linked symbols, high intraday volatility, and drop-bounce setups, then sends qualifying non-mock ideas through the same risk engine as watchlist trades.
+The server-side opportunity scanner uses Finnhub quotes, market news, and recent candles when `FINNHUB_API_KEY` is configured. It ranks broader stock and crypto candidates from `OPPORTUNITY_UNIVERSE`, looks for news-linked symbols, RSI/ATR-confirmed high volatility, regime-filtered momentum, and drop-bounce setups, then sends qualifying non-mock ideas through the same risk engine as watchlist trades.
+
+When `WEEKEND_CRYPTO_ONLY=true`, the app switches to crypto-only scanning from Friday after the normal US equity close window through Monday premarket. During that window, stock symbols are filtered out of analysis, suggestions, and manual approvals; crypto symbols such as `BTC/USD`, `ETH/USD`, `SOL/USD`, and `DOGE/USD` remain available in paper mode.
 
 This is still an educational paper-trading feature. It cannot guarantee profit, it can be wrong or stale, and it does not bypass manual approval, the kill switch, max position limits, stale data checks, or live-trading locks.
 

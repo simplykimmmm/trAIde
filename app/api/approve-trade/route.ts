@@ -3,6 +3,7 @@ import { z } from "zod";
 import type { TradeSide } from "@/lib/etoro/types";
 import { getEToroAdapter } from "@/lib/etoro";
 import { getMarketQuote } from "@/lib/market";
+import { getTradingSession, isCryptoSymbol } from "@/lib/market/session";
 import { getPaperAccount, getOpenPaperTrades, isKillSwitchActive } from "@/lib/paper/database";
 import { executePaperTrade, logRejectedTrade } from "@/lib/paper/engine";
 import { getEffectivePaperRiskConfig, getRiskConfig } from "@/lib/risk/config";
@@ -27,6 +28,22 @@ const requestSchema = z.object({
 
 export async function POST(request: NextRequest) {
   const body = requestSchema.parse(await request.json());
+  const session = getTradingSession();
+
+  if (session.cryptoOnly && !isCryptoSymbol(body.symbol)) {
+    const trade = logRejectedTrade({
+      symbol: body.symbol,
+      action: body.action,
+      entryPrice: body.entryPrice,
+      stopLoss: body.stopLoss,
+      takeProfit: body.takeProfit,
+      rejectionReason: "OFF_SESSION_CRYPTO_ONLY",
+      aiConfidence: body.confidence,
+      notes: "Manual approval refused because weekend/off-session mode allows crypto symbols only.",
+    });
+
+    return NextResponse.json({ accepted: false, session, trade }, { status: 200 });
+  }
 
   if (body.decision === "REJECT") {
     const trade = logRejectedTrade({
