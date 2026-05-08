@@ -16,6 +16,13 @@ type AccountResponse = {
     speedMultiplier: number;
     riskMultiplier: number;
   };
+  deployment: {
+    host: "local" | "vercel";
+    hasFinnhubKey: boolean;
+    hasGeminiKey: boolean;
+    storage: "local-sqlite" | "ephemeral-sqlite";
+    warnings: string[];
+  };
   account: {
     currency: string;
     balance: number;
@@ -122,6 +129,7 @@ export default function DashboardPage() {
   const liveAllowed = account?.liveTradingEnabled === true;
   const killActive = account?.killSwitchActive === true;
   const botRunning = account?.botRunning === true && !killActive;
+  const deploymentWarnings = account?.deployment.warnings ?? [];
   const draftRefreshMinutes = speedLevelToMinutes(draftSpeedLevel);
   const draftSpeedMultiplier = calculateSpeedMultiplier(draftRefreshMinutes);
 
@@ -358,6 +366,23 @@ export default function DashboardPage() {
           <span>{DISCLAIMER}</span>
           <span>{BACKTEST_DISCLAIMER}</span>
         </div>
+        {deploymentWarnings.length ? (
+          <div className="mb-4 rounded border border-amber-200 bg-white px-4 py-3 text-sm text-amber-950 shadow-panel">
+            <div className="mb-2 flex items-center gap-2 font-semibold text-ink">
+              <AlertTriangle size={16} /> Deployment status
+            </div>
+            <div className="grid gap-2 md:grid-cols-3">
+              <StatusPill label="Host" value={account?.deployment.host === "vercel" ? "Vercel" : "Local"} good={account?.deployment.host !== "vercel"} />
+              <StatusPill label="Finnhub" value={account?.deployment.hasFinnhubKey ? "Connected" : "Missing key"} good={account?.deployment.hasFinnhubKey === true} />
+              <StatusPill label="Gemini" value={account?.deployment.hasGeminiKey ? "Connected" : "Missing key"} good={account?.deployment.hasGeminiKey === true} />
+            </div>
+            <ul className="mt-3 space-y-1">
+              {deploymentWarnings.map((warning) => (
+                <li key={warning}>{warning}</li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
         {message ? <div className="mb-4 rounded border border-line bg-white px-4 py-3 text-sm text-ink shadow-panel">{message}</div> : null}
 
         <div className="grid gap-4 lg:grid-cols-12">
@@ -899,6 +924,15 @@ function Metric({ label, value, tone }: { label: string; value: string; tone?: "
     <div className="min-w-0 border-b border-line pb-2">
       <div className="text-xs font-medium text-slate-500">{label}</div>
       <div className={`mt-1 text-lg font-semibold ${tone === "good" ? "text-emerald-700" : tone === "bad" ? "text-red-700" : "text-ink"}`}>{value}</div>
+    </div>
+  );
+}
+
+function StatusPill({ label, value, good }: { label: string; value: string; good: boolean }) {
+  return (
+    <div className="flex min-w-0 items-center justify-between gap-3 rounded border border-line bg-panel px-3 py-2">
+      <span className="text-xs font-semibold uppercase text-slate-500">{label}</span>
+      <span className={`rounded px-2 py-1 text-xs font-bold ${good ? "bg-emerald-100 text-emerald-800" : "bg-amber-100 text-amber-900"}`}>{value}</span>
     </div>
   );
 }

@@ -61,6 +61,26 @@ npm run dev
 
 Open [http://localhost:3000](http://localhost:3000). Fill `GEMINI_API_KEY` in `.env.local` if you want real Gemini analysis.
 
+## Vercel Deployment
+
+Vercel does not read your local `.env.local`. Add deployment variables in Vercel Project Settings -> Environment Variables, then redeploy:
+
+```bash
+FINNHUB_API_KEY=your_finnhub_key
+GEMINI_API_KEY=your_gemini_key
+GEMINI_MODEL=gemini-flash-latest
+GEMINI_DELAY_MS=1200
+LIVE_TRADING=false
+USE_REAL_ETORO=false
+WATCHLIST=SPY,QQQ,AAPL,MSFT,GOOGL,BTC/USD,ETH/USD
+ALLOW_LEVERAGE=true
+PAPER_EXPOSURE_MULTIPLIER=5
+MAX_DAILY_LOSS_PCT=1
+MAX_ACCOUNT_RISK_PCT=1
+```
+
+If the deployed header says `DATA: MOCK`, `FINNHUB_API_KEY` is missing or unavailable in that Vercel environment. If it says `BOT: PAUSED`, click Start in the dashboard. SQLite storage on Vercel serverless is ephemeral, so bot state and paper trades can reset; use a hosted database before relying on deployed persistence.
+
 ## Paper Trading
 
 Paper trading is the default. The dashboard reads local account, trade, system state, and risk data from SQLite through server-side API routes. Suggested trades must pass the risk engine before an Approve button appears. Approving in paper mode records a simulated trade in `data/paper-trading.sqlite`, applies a simple 0.1% fee approximation, and tracks stop-loss and take-profit closure on price updates.
@@ -73,7 +93,7 @@ Aggressive simulation is available through `PAPER_EXPOSURE_MULTIPLIER` and `ALLO
 
 Paper trades use a flat `$1` transaction fee on open and another `$1` fee on close. The dashboard shows stake/notional, fees paid, realized PnL, unrealized PnL, and a paper PnL graph.
 
-The Start button enables a local paper-bot refresh loop that updates suggestions every 30 seconds. It does not auto-approve trades; manual approval is still required. The kill switch pauses the loop immediately.
+The Start button enables a paper-bot refresh loop using the dashboard speed setting. It does not auto-approve trades; manual approval is still required. The kill switch pauses the loop immediately.
 
 ## eToro Public API
 
