@@ -29,9 +29,9 @@ export function getRiskConfig(): RiskConfig {
   };
 }
 
-export function getEffectivePaperRiskConfig(): RiskConfig {
+export async function getEffectivePaperRiskConfig(): Promise<RiskConfig> {
   const base = getRiskConfig();
-  const botSettings = getBotSettings();
+  const botSettings = await getBotSettings();
 
   return {
     ...base,
