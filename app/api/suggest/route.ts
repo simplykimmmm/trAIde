@@ -40,7 +40,7 @@ export async function GET(request: NextRequest) {
   const rejected = [];
   const suggestedSymbols = new Set<string>();
 
-  for (const symbol of filterSymbolsForSession(getWatchlist())) {
+  for (const symbol of filterSymbolsForSession(getWatchlist()).slice(0, Number(process.env.WATCHLIST_ANALYSIS_LIMIT ?? 2))) {
     try {
       const quote = await getMarketQuote(symbol);
       const analysis = await analyzeSymbol(symbol, quote);
