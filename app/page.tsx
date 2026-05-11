@@ -5,6 +5,7 @@ import { Activity, AlertTriangle, Check, ListChecks, Loader2, Pause, Play, Power
 
 type Mode = "paper" | "live";
 type ControlAction = "bot" | "refresh" | "kill" | "unhalt" | "settings" | "reset" | null;
+type NoticeTone = "info" | "success" | "warning" | "danger";
 
 type AccountResponse = {
   marketDataProvider: "finnhub" | "mock-etoro";
@@ -145,6 +146,8 @@ export default function DashboardPage() {
   const [fastLoading, setFastLoading] = useState(false);
   const [slowLoading, setSlowLoading] = useState(false);
   const [controlBusy, setControlBusy] = useState<ControlAction>(null);
+  const [botTarget, setBotTarget] = useState<boolean | null>(null);
+  const [notice, setNotice] = useState<{ text: string; tone: NoticeTone } | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [uiTick, setUiTick] = useState(0);
@@ -162,10 +165,33 @@ export default function DashboardPage() {
   const liveAllowed = account?.liveTradingEnabled === true;
   const killActive = account?.killSwitchActive === true;
   const botRunning = account?.botRunning === true && !killActive;
-  const deploymentWarnings = account?.deployment.warnings ?? [];
+  const botBadgeLabel = controlBusy === "bot"
+    ? botTarget ? "STARTING..." : "PAUSING..."
+    : botRunning ? "RUNNING" : "PAUSED";
+  const deploymentWarnings = (account?.deployment.warnings ?? []).filter((warning) => {
+    const isPausedWarning = warning.toLowerCase().includes("bot is paused");
+    return !(isPausedWarning && (botRunning || (controlBusy === "bot" && botTarget === true)));
+  });
   const draftRefreshSeconds = speedLevelToSeconds(draftSpeedLevel);
   const draftSpeedMultiplier = calculateSpeedMultiplier(draftRefreshSeconds);
   const localHeartbeat = useMemo(() => new Date().toLocaleTimeString(), [uiTick]);
+  const actionCopy = getActionCopy(controlBusy, botTarget, fastLoading, slowLoading, loading);
+
+  function showNotice(text: string, tone: NoticeTone = "info") {
+    setNotice({ text, tone });
+  }
+
+  useEffect(() => {
+    if (!notice) {
+      return;
+    }
+
+    const timer = window.setTimeout(() => {
+      setNotice(null);
+    }, 4500);
+
+    return () => window.clearTimeout(timer);
+  }, [notice]);
 
   const refreshFastData = useCallback(async (showLoading = false) => {
     if (showLoading) {
@@ -228,12 +254,14 @@ export default function DashboardPage() {
     if (manual) {
       setControlBusy("refresh");
       setMessage("Refreshing dashboard data...");
+      showNotice("Refresh pressed. Pulling account, trades, AI, and scanner data.", "info");
     }
 
     try {
       await Promise.all([refreshFastData(manual), refreshSlowData(manual)]);
       if (manual) {
         setMessage("Dashboard refreshed. API calls stayed rate-limited.");
+        showNotice("Dashboard refresh complete.", "success");
       }
     } finally {
       setLoading(false);
@@ -298,7 +326,9 @@ export default function DashboardPage() {
 
   async function setBotActive(running: boolean) {
     setControlBusy("bot");
+    setBotTarget(running);
     setMessage(running ? "Starting paper bot..." : "Pausing paper bot...");
+    showNotice(running ? "Start pressed. Waking the paper bot now." : "Pause pressed. Stopping the paper loop.", "info");
 
     try {
       const response = await fetch("/api/bot-state", {
@@ -311,6 +341,7 @@ export default function DashboardPage() {
 
       if (!response.ok || payload.error === "KILL_SWITCH_ACTIVE") {
         setMessage("Cannot start while the kill switch is active.");
+        showNotice("Start blocked by the kill switch.", "danger");
         await refreshFastData(true);
         return;
       }
@@ -322,20 +353,24 @@ export default function DashboardPage() {
         botSettings: payload.settings,
       } : current);
       setMessage(running ? `Paper bot started. Suggestions refresh every ${payload.settings.refreshIntervalMinutes} second(s)${autoPaper ? " and eligible paper trades open automatically after risk checks." : "; trades still need manual approval."}` : "Paper bot paused.");
+      showNotice(running ? "Paper bot is running." : "Paper bot paused.", running ? "success" : "warning");
       await refreshFastData(true);
       if (running) {
         void refreshSlowData(true);
       }
     } catch {
       setMessage(running ? "Start failed. Bot state could not be saved." : "Pause failed. Bot state could not be saved.");
+      showNotice(running ? "Start failed." : "Pause failed.", "danger");
     } finally {
       setControlBusy(null);
+      setBotTarget(null);
     }
   }
 
   async function updateBotSettings(settings: { refreshIntervalMinutes?: number; riskMultiplier?: number }) {
     setControlBusy("settings");
     setMessage("Saving bot settings...");
+    showNotice("Saving bot settings.", "info");
 
     try {
       const response = await fetch("/api/bot-state", {
@@ -353,9 +388,11 @@ export default function DashboardPage() {
       }
 
       setMessage(`Bot speed ${payload.settings.refreshIntervalMinutes} second(s), risk ${payload.settings.riskMultiplier}x.`);
+      showNotice("Bot settings saved.", "success");
       await refreshFastData(true);
     } catch {
       setMessage("Could not save bot settings.");
+      showNotice("Could not save bot settings.", "danger");
     } finally {
       setControlBusy(null);
     }
@@ -378,15 +415,25 @@ export default function DashboardPage() {
   }
 
   async function triggerKillSwitch() {
+    const confirmed = window.confirm("Activate the kill switch and halt all new paper activity?");
+    if (!confirmed) {
+      setMessage("Kill switch cancelled.");
+      showNotice("Kill switch cancelled.", "warning");
+      return;
+    }
+
     setControlBusy("kill");
     setMessage("Activating kill switch...");
+    showNotice("Kill switch pressed. Halting activity.", "danger");
 
     try {
       await fetch("/api/kill-switch", { method: "POST", body: JSON.stringify({ active: true }) });
       setMessage("Kill switch activated. All new trade activity is halted.");
+      showNotice("Kill switch active.", "danger");
       await refreshFastData(true);
     } catch {
       setMessage("Kill switch request failed.");
+      showNotice("Kill switch request failed.", "danger");
     } finally {
       setControlBusy(null);
     }
@@ -396,19 +443,23 @@ export default function DashboardPage() {
     const confirmed = window.confirm("Un-halt local paper trading? New suggestions and paper approvals will be allowed again after risk checks.");
     if (!confirmed) {
       setMessage("Un-halt cancelled.");
+      showNotice("Un-halt cancelled.", "warning");
       return;
     }
 
     setControlBusy("unhalt");
     setMessage("Clearing kill switch...");
+    showNotice("Un-halt pressed. Clearing kill switch.", "info");
 
     try {
       await fetch("/api/kill-switch", { method: "POST", body: JSON.stringify({ active: false }) });
       setMessage("Kill switch cleared. Paper trading activity is available again, subject to risk checks.");
+      showNotice("Kill switch cleared.", "success");
       await refreshFastData(true);
       void refreshSlowData(true);
     } catch {
       setMessage("Un-halt request failed.");
+      showNotice("Un-halt failed.", "danger");
     } finally {
       setControlBusy(null);
     }
@@ -418,11 +469,13 @@ export default function DashboardPage() {
     const confirmed = window.confirm("Reset the paper simulation to $100,000 and clear all paper trades? This cannot be undone.");
     if (!confirmed) {
       setMessage("Paper reset cancelled.");
+      showNotice("Paper reset cancelled.", "warning");
       return;
     }
 
     setControlBusy("reset");
     setMessage("Resetting paper simulation to $100,000...");
+    showNotice("Reset pressed. Clearing paper portfolio.", "warning");
 
     try {
       const response = await fetch("/api/reset-paper", {
@@ -439,10 +492,12 @@ export default function DashboardPage() {
       setSuggestions([]);
       setTrades([]);
       setMessage("Paper simulation reset to $100,000. Bot is paused and old paper trades were cleared.");
+      showNotice("Portfolio reset to $100,000.", "success");
       await refreshFastData(true);
       void refreshSlowData(true);
     } catch {
       setMessage("Paper reset failed. Nothing was changed.");
+      showNotice("Paper reset failed.", "danger");
     } finally {
       setControlBusy(null);
     }
@@ -458,6 +513,7 @@ export default function DashboardPage() {
 
     setBusyId(suggestion.id);
     setMessage(decision === "APPROVE" ? `Approving ${suggestion.symbol}...` : `Rejecting ${suggestion.symbol}...`);
+    showNotice(decision === "APPROVE" ? `Approve pressed for ${suggestion.symbol}.` : `Reject pressed for ${suggestion.symbol}.`, "info");
 
     try {
       const response = await fetch("/api/approve-trade", {
@@ -479,10 +535,12 @@ export default function DashboardPage() {
       });
       const payload = await response.json();
       setMessage(payload.accepted ? "Trade accepted after risk checks." : "Trade rejected and logged.");
+      showNotice(payload.accepted ? "Trade accepted after risk checks." : "Trade rejected and logged.", payload.accepted ? "success" : "warning");
       await refreshFastData(true);
       void refreshSlowData(true);
     } catch {
       setMessage("Trade decision failed. Nothing was changed.");
+      showNotice("Trade decision failed.", "danger");
     } finally {
       setBusyId(null);
     }
@@ -490,6 +548,9 @@ export default function DashboardPage() {
 
   return (
     <main className="min-h-screen bg-[#eef3ef]">
+      {loading && !account ? <LoadingScreen /> : null}
+      {actionCopy ? <ActionOverlay copy={actionCopy} /> : null}
+      {notice ? <ActionNotice notice={notice} onClose={() => setNotice(null)} /> : null}
       <header className="border-b border-line bg-white">
         <div className="mx-auto flex max-w-7xl flex-col gap-4 px-4 py-4 md:flex-row md:items-center md:justify-between md:px-6">
           <div className="flex flex-wrap items-center gap-3">
@@ -514,8 +575,8 @@ export default function DashboardPage() {
                 AUTO PAPER
               </span>
             ) : null}
-            <span className={`rounded px-2.5 py-1 text-xs font-semibold ${botRunning ? "bg-emerald-100 text-emerald-800" : "bg-slate-100 text-slate-700"}`}>
-              BOT: {botRunning ? "RUNNING" : "PAUSED"}
+            <span className={`rounded px-2.5 py-1 text-xs font-semibold ${controlBusy === "bot" ? "animate-pulse bg-amber-100 text-amber-900" : botRunning ? "bg-emerald-100 text-emerald-800" : "bg-slate-100 text-slate-700"}`}>
+              BOT: {botBadgeLabel}
             </span>
             <span className="rounded bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-700">
               UI refresh: 100ms
@@ -536,7 +597,7 @@ export default function DashboardPage() {
           <div className="flex flex-wrap items-center gap-2">
             {botRunning ? (
               <button
-                className="inline-flex h-10 items-center gap-2 rounded border border-line bg-white px-3 text-sm font-semibold text-ink hover:bg-panel disabled:opacity-60"
+                className={`inline-flex h-10 items-center gap-2 rounded border border-line bg-white px-3 text-sm font-semibold text-ink hover:bg-panel disabled:opacity-60 ${controlBusy === "bot" ? "ring-2 ring-amber-300" : ""}`}
                 onClick={() => setBotActive(false)}
                 disabled={controlBusy === "bot"}
                 title="Pause paper bot refresh loop"
@@ -545,7 +606,7 @@ export default function DashboardPage() {
               </button>
             ) : (
               <button
-                className="inline-flex h-10 items-center gap-2 rounded bg-emerald-700 px-3 text-sm font-semibold text-white hover:bg-emerald-800 disabled:opacity-60"
+                className={`inline-flex h-10 items-center gap-2 rounded bg-emerald-700 px-4 text-sm font-semibold text-white shadow-panel hover:bg-emerald-800 disabled:opacity-60 ${controlBusy === "bot" ? "animate-pulse ring-4 ring-emerald-200" : ""}`}
                 onClick={() => setBotActive(true)}
                 disabled={killActive || controlBusy === "bot"}
                 title="Start paper bot refresh loop"
@@ -594,12 +655,12 @@ export default function DashboardPage() {
               </button>
             ) : null}
             <button
-              className="inline-flex h-10 items-center gap-2 rounded border border-line bg-white px-3 text-sm font-semibold text-ink hover:bg-panel disabled:opacity-60"
+              className="inline-flex h-10 items-center gap-2 rounded border border-amber-300 bg-amber-50 px-3 text-sm font-semibold text-amber-950 hover:bg-amber-100 disabled:opacity-60"
               onClick={resetPaperAccount}
               disabled={controlBusy === "reset"}
               title="Reset paper account to $100,000 and clear paper trades"
             >
-              {controlBusy === "reset" ? <ButtonSpinner /> : <RotateCcw size={16} />} {controlBusy === "reset" ? "Resetting..." : "Reset Paper"}
+              {controlBusy === "reset" ? <ButtonSpinner /> : <RotateCcw size={16} />} {controlBusy === "reset" ? "Resetting..." : "Reset to $100k"}
             </button>
             <button
               className="inline-flex h-10 items-center gap-2 rounded border border-line bg-white px-3 text-sm font-semibold text-ink hover:bg-panel disabled:opacity-60"
@@ -607,7 +668,7 @@ export default function DashboardPage() {
               disabled={controlBusy === "refresh"}
               title="Refresh dashboard data"
             >
-              {controlBusy === "refresh" ? <ButtonSpinner /> : <RefreshCw size={16} />} {controlBusy === "refresh" ? "Refreshing..." : "Refresh"}
+              <RefreshCw size={16} className={controlBusy === "refresh" ? "animate-spin" : ""} /> {controlBusy === "refresh" ? "Refreshing..." : "Refresh"}
             </button>
           </div>
         </div>
@@ -922,6 +983,139 @@ export default function DashboardPage() {
       </div>
     </main>
   );
+}
+
+function LoadingScreen() {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#eef3ef]/95 px-4">
+      <div className="w-full max-w-sm rounded border border-line bg-white p-5 text-center shadow-panel">
+        <Loader2 size={34} className="mx-auto animate-spin text-emerald-700" />
+        <div className="mt-3 text-base font-semibold text-ink">Loading trAIde</div>
+        <div className="mt-1 text-sm text-slate-600">Fetching account, paper trades, and market status.</div>
+        <div className="mt-4 h-2 overflow-hidden rounded bg-slate-100">
+          <div className="h-full w-1/2 animate-pulse rounded bg-emerald-600" />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ActionOverlay({ copy }: { copy: { title: string; detail: string; tone: NoticeTone } }) {
+  const toneStyles: Record<NoticeTone, string> = {
+    info: "border-blue-200 bg-blue-50 text-blue-950",
+    success: "border-emerald-200 bg-emerald-50 text-emerald-950",
+    warning: "border-amber-200 bg-amber-50 text-amber-950",
+    danger: "border-red-200 bg-red-50 text-red-950",
+  };
+
+  return (
+    <div className="pointer-events-none fixed left-1/2 top-4 z-40 w-[calc(100%-2rem)] max-w-xl -translate-x-1/2">
+      <div className={`flex items-center gap-3 rounded border px-4 py-3 shadow-panel ${toneStyles[copy.tone]}`}>
+        <Loader2 size={18} className="animate-spin shrink-0" />
+        <div className="min-w-0">
+          <div className="text-sm font-bold">{copy.title}</div>
+          <div className="text-xs opacity-80">{copy.detail}</div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ActionNotice({ notice, onClose }: { notice: { text: string; tone: NoticeTone }; onClose: () => void }) {
+  const toneStyles: Record<NoticeTone, string> = {
+    info: "border-blue-200 bg-white text-blue-950",
+    success: "border-emerald-200 bg-white text-emerald-950",
+    warning: "border-amber-200 bg-white text-amber-950",
+    danger: "border-red-200 bg-white text-red-950",
+  };
+
+  return (
+    <div className="fixed bottom-4 right-4 z-50 w-[calc(100%-2rem)] max-w-sm">
+      <div className={`flex items-start justify-between gap-3 rounded border px-4 py-3 shadow-panel ${toneStyles[notice.tone]}`}>
+        <div className="flex items-center gap-2 text-sm font-semibold">
+          <Check size={16} className="shrink-0" />
+          <span>{notice.text}</span>
+        </div>
+        <button className="rounded p-1 text-slate-500 hover:bg-slate-100" onClick={onClose} title="Dismiss notification">
+          <X size={15} />
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function getActionCopy(
+  action: ControlAction,
+  botTarget: boolean | null,
+  fastLoading: boolean,
+  slowLoading: boolean,
+  loading: boolean,
+): { title: string; detail: string; tone: NoticeTone } | null {
+  if (action === "bot") {
+    return {
+      title: botTarget ? "Starting paper bot" : "Pausing paper bot",
+      detail: botTarget ? "Saving bot state, then refreshing positions and strategy data." : "Saving pause state and refreshing account data.",
+      tone: botTarget ? "success" : "warning",
+    };
+  }
+
+  if (action === "refresh") {
+    return {
+      title: "Refreshing dashboard",
+      detail: "Fast account data and slower AI/scanner data are updating now.",
+      tone: "info",
+    };
+  }
+
+  if (action === "reset") {
+    return {
+      title: "Resetting paper portfolio",
+      detail: "Clearing paper trades, pausing the bot, and restoring $100,000.",
+      tone: "warning",
+    };
+  }
+
+  if (action === "kill") {
+    return {
+      title: "Activating kill switch",
+      detail: "New paper trade activity is being halted.",
+      tone: "danger",
+    };
+  }
+
+  if (action === "unhalt") {
+    return {
+      title: "Clearing kill switch",
+      detail: "Paper activity will be available again after risk checks.",
+      tone: "info",
+    };
+  }
+
+  if (action === "settings") {
+    return {
+      title: "Saving settings",
+      detail: "Speed and risk settings are being stored.",
+      tone: "info",
+    };
+  }
+
+  if (fastLoading || slowLoading) {
+    return {
+      title: fastLoading && slowLoading ? "Updating dashboard data" : fastLoading ? "Updating account data" : "Updating strategy data",
+      detail: "Network refresh is rate-limited; the UI tick stays local.",
+      tone: "info",
+    };
+  }
+
+  if (loading) {
+    return {
+      title: "Loading dashboard",
+      detail: "Preparing account, positions, and paper trade history.",
+      tone: "info",
+    };
+  }
+
+  return null;
 }
 
 function PnlChart({ points }: { points: Array<{ label: string; value: number }> }) {
