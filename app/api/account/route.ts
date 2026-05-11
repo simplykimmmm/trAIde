@@ -8,9 +8,9 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function GET() {
-  const account = getPaperAccount();
-  const openPositions = getOpenPaperTrades();
-  const riskConfig = getEffectivePaperRiskConfig();
+  const account = await getPaperAccount();
+  const openPositions = await getOpenPaperTrades();
+  const riskConfig = await getEffectivePaperRiskConfig();
   const dailyLossLimit = account.equity * riskConfig.maxDailyLossPct;
   const isVercel = process.env.VERCEL === "1" || Boolean(process.env.VERCEL_URL);
   const hasFinnhubKey = Boolean(process.env.FINNHUB_API_KEY);
