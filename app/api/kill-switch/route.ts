@@ -6,17 +6,17 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function GET() {
-  return NextResponse.json({ active: isKillSwitchActive() });
+  return NextResponse.json({ active: await isKillSwitchActive() });
 }
 
 export async function POST(request: Request) {
   const body = await request.json().catch(() => ({}));
 
   if (body?.active === false) {
-    deactivateKillSwitch();
+    await deactivateKillSwitch();
   } else {
-    haltAllPaperActivity();
+    await haltAllPaperActivity();
   }
 
-  return NextResponse.json({ active: isKillSwitchActive() });
+  return NextResponse.json({ active: await isKillSwitchActive() });
 }

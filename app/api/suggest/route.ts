@@ -17,7 +17,7 @@ export const dynamic = "force-dynamic";
 export async function GET(request: NextRequest) {
   const url = new URL(request.url);
   const tradingMode = (url.searchParams.get("mode") === "live" ? "live" : "paper") satisfies TradingMode;
-  const config = tradingMode === "paper" ? getEffectivePaperRiskConfig() : getRiskConfig();
+  const config = tradingMode === "paper" ? await getEffectivePaperRiskConfig() : getRiskConfig();
   const session = getTradingSession();
   const suggestions = [];
   const rejected = [];
@@ -32,10 +32,10 @@ export async function GET(request: NextRequest) {
         continue;
       }
 
-      const paperAccount = getPaperAccount();
-      const openPositions = getOpenPaperTrades();
+      const paperAccount = await getPaperAccount();
+      const openPositions = await getOpenPaperTrades();
       const risk = checkTradeAllowed({
-        killSwitchActive: isKillSwitchActive(),
+        killSwitchActive: await isKillSwitchActive(),
         tradingMode,
         liveTradingEnabled: process.env.LIVE_TRADING === "true",
         analysis,
@@ -75,7 +75,7 @@ export async function GET(request: NextRequest) {
         suggestedSymbols.add(symbol);
       } else {
         rejected.push({ symbol, action: analysis.action, risk });
-        maybeLogRiskRejection(symbol, analysis.action, analysis.suggested_entry, analysis.suggested_stop_loss, analysis.suggested_take_profit, analysis.confidence, risk);
+        await maybeLogRiskRejection(symbol, analysis.action, analysis.suggested_entry, analysis.suggested_stop_loss, analysis.suggested_take_profit, analysis.confidence, risk);
       }
     } catch (error) {
       rejected.push({ symbol, error: error instanceof Error ? error.message : "Unknown suggestion error" });
@@ -98,10 +98,10 @@ export async function GET(request: NextRequest) {
           continue;
         }
 
-        const paperAccount = getPaperAccount();
-        const openPositions = getOpenPaperTrades();
+        const paperAccount = await getPaperAccount();
+        const openPositions = await getOpenPaperTrades();
         const risk = checkTradeAllowed({
-          killSwitchActive: isKillSwitchActive(),
+          killSwitchActive: await isKillSwitchActive(),
           tradingMode,
           liveTradingEnabled: process.env.LIVE_TRADING === "true",
           analysis,
@@ -142,7 +142,7 @@ export async function GET(request: NextRequest) {
           suggestedSymbols.add(opportunity.symbol);
         } else {
           rejected.push({ symbol: opportunity.symbol, action: analysis.action, source: opportunity.source, risk });
-          maybeLogRiskRejection(opportunity.symbol, analysis.action as TradeSide, analysis.suggested_entry, analysis.suggested_stop_loss, analysis.suggested_take_profit, analysis.confidence, risk);
+          await maybeLogRiskRejection(opportunity.symbol, analysis.action as TradeSide, analysis.suggested_entry, analysis.suggested_stop_loss, analysis.suggested_take_profit, analysis.confidence, risk);
         }
       } catch (error) {
         rejected.push({ symbol: opportunity.symbol, source: opportunity.source, error: error instanceof Error ? error.message : "Unknown scanner suggestion error" });
@@ -162,7 +162,7 @@ function makeSuggestionId(symbol: string, action: string, timestamp: string): st
   return Buffer.from(`${symbol}:${action}:${timestamp}`).toString("base64url");
 }
 
-function maybeLogRiskRejection(
+async function maybeLogRiskRejection(
   symbol: string,
   action: TradeSide,
   entryPrice: number,
@@ -170,12 +170,12 @@ function maybeLogRiskRejection(
   takeProfit: number,
   confidence: number,
   risk: RiskCheckResult,
-): void {
+): Promise<void> {
   if (risk.allowed) {
     return;
   }
 
-  logRejectedTrade({
+  await logRejectedTrade({
     symbol,
     action,
     entryPrice,

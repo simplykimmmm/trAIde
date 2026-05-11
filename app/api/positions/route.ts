@@ -8,20 +8,20 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function GET() {
-  const initialOpenTrades = getOpenPaperTrades();
+  const initialOpenTrades = await getOpenPaperTrades();
   const quoteBySymbol = new Map<string, number>();
 
   for (const trade of initialOpenTrades) {
     try {
       const quote = await getMarketQuote(trade.symbol);
       quoteBySymbol.set(trade.symbol, quote.last);
-      applyPriceUpdate(trade.symbol, quote.last);
+      await applyPriceUpdate(trade.symbol, quote.last);
     } catch {
       quoteBySymbol.set(trade.symbol, trade.entry_price);
     }
   }
 
-  const positions: Position[] = getOpenPaperTrades().map((trade) => {
+  const positions: Position[] = (await getOpenPaperTrades()).map((trade) => {
     const currentPrice = quoteBySymbol.get(trade.symbol) ?? trade.entry_price;
     const unrealizedPnl =
       trade.action === "BUY"

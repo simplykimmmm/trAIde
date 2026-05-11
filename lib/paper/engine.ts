@@ -3,9 +3,9 @@ import type { ExecutePaperTradeInput, PaperTrade, RejectedTradeInput } from "./t
 
 export const PAPER_TRANSACTION_FEE = 1;
 
-export function executePaperTrade(input: ExecutePaperTradeInput): PaperTrade {
-  if (isKillSwitchActive()) {
-    return logRejectedTrade({
+export async function executePaperTrade(input: ExecutePaperTradeInput): Promise<PaperTrade> {
+  if (await isKillSwitchActive()) {
+    return await logRejectedTrade({
       symbol: input.symbol,
       action: input.action,
       entryPrice: input.entryPrice,
@@ -18,15 +18,15 @@ export function executePaperTrade(input: ExecutePaperTradeInput): PaperTrade {
   }
 
   const openingFee = PAPER_TRANSACTION_FEE;
-  const account = getPaperAccount();
+  const account = await getPaperAccount();
 
-  updatePaperAccount({
+  await updatePaperAccount({
     balance: roundMoney(account.balance - openingFee),
     equity: roundMoney(account.equity - openingFee),
     daily_loss: roundMoney(account.daily_loss + openingFee),
   });
 
-  return insertPaperTrade({
+  return await insertPaperTrade({
     timestamp: new Date().toISOString(),
     symbol: input.symbol,
     action: input.action,
@@ -44,8 +44,8 @@ export function executePaperTrade(input: ExecutePaperTradeInput): PaperTrade {
   });
 }
 
-export function logRejectedTrade(input: RejectedTradeInput): PaperTrade {
-  return insertPaperTrade({
+export async function logRejectedTrade(input: RejectedTradeInput): Promise<PaperTrade> {
+  return await insertPaperTrade({
     timestamp: new Date().toISOString(),
     symbol: input.symbol,
     action: input.action === "HOLD" ? "HOLD" : "REJECT",
@@ -63,9 +63,9 @@ export function logRejectedTrade(input: RejectedTradeInput): PaperTrade {
   });
 }
 
-export function applyPriceUpdate(symbol: string, currentPrice: number): PaperTrade[] {
+export async function applyPriceUpdate(symbol: string, currentPrice: number): Promise<PaperTrade[]> {
   const closed: PaperTrade[] = [];
-  const openTrades = getOpenPaperTrades().filter((trade) => trade.symbol === symbol);
+  const openTrades = (await getOpenPaperTrades()).filter((trade) => trade.symbol === symbol);
 
   for (const trade of openTrades) {
     const hitTakeProfit = trade.action === "BUY" ? currentPrice >= trade.take_profit : currentPrice <= trade.take_profit;
@@ -82,22 +82,22 @@ export function applyPriceUpdate(symbol: string, currentPrice: number): PaperTra
     const closingFee = PAPER_TRANSACTION_FEE;
     const netPnl = roundMoney(grossPnl - closingFee);
     const status = hitTakeProfit ? "CLOSED_TP" : "CLOSED_SL";
-    const account = getPaperAccount();
+    const account = await getPaperAccount();
 
-    updatePaperAccount({
+    await updatePaperAccount({
       balance: roundMoney(account.balance + netPnl),
       equity: roundMoney(account.equity + netPnl),
       daily_loss: roundMoney(account.daily_loss + (netPnl < 0 ? Math.abs(netPnl) : 0)),
     });
 
-    closed.push(closePaperTrade(trade.id, status, currentPrice, netPnl, roundMoney(closingFee)));
+    closed.push(await closePaperTrade(trade.id, status, currentPrice, netPnl, roundMoney(closingFee)));
   }
 
   return closed;
 }
 
-export function haltAllPaperActivity(): void {
-  activateKillSwitch();
+export async function haltAllPaperActivity(): Promise<void> {
+  await activateKillSwitch();
 }
 
 function roundMoney(value: number): number {

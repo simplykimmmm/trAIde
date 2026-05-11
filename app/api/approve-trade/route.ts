@@ -31,7 +31,7 @@ export async function POST(request: NextRequest) {
   const session = getTradingSession();
 
   if (session.cryptoOnly && !isCryptoSymbol(body.symbol)) {
-    const trade = logRejectedTrade({
+    const trade = await logRejectedTrade({
       symbol: body.symbol,
       action: body.action,
       entryPrice: body.entryPrice,
@@ -46,7 +46,7 @@ export async function POST(request: NextRequest) {
   }
 
   if (body.decision === "REJECT") {
-    const trade = logRejectedTrade({
+    const trade = await logRejectedTrade({
       symbol: body.symbol,
       action: body.action,
       entryPrice: body.entryPrice,
@@ -62,10 +62,10 @@ export async function POST(request: NextRequest) {
 
   const adapter = getEToroAdapter();
   const quote = await getMarketQuote(body.symbol);
-  const account = getPaperAccount();
-  const riskConfig = body.mode === "paper" ? getEffectivePaperRiskConfig() : getRiskConfig();
+  const account = await getPaperAccount();
+  const riskConfig = body.mode === "paper" ? await getEffectivePaperRiskConfig() : getRiskConfig();
   const risk = checkTradeAllowed({
-    killSwitchActive: isKillSwitchActive(),
+    killSwitchActive: await isKillSwitchActive(),
     tradingMode: body.mode,
     liveTradingEnabled: process.env.LIVE_TRADING === "true",
     analysis: {
@@ -85,7 +85,7 @@ export async function POST(request: NextRequest) {
       availableCash: account.balance,
       dailyLoss: account.daily_loss,
     },
-    openPositionsCount: getOpenPaperTrades().length,
+    openPositionsCount: (await getOpenPaperTrades()).length,
     candidate: {
       symbol: body.symbol,
       side: body.action as TradeSide,
@@ -97,7 +97,7 @@ export async function POST(request: NextRequest) {
   });
 
   if (!risk.allowed) {
-    const trade = logRejectedTrade({
+    const trade = await logRejectedTrade({
       symbol: body.symbol,
       action: body.action,
       entryPrice: body.entryPrice,
@@ -125,7 +125,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ accepted: true, live: true, result });
   }
 
-  const trade = executePaperTrade({
+  const trade = await executePaperTrade({
     symbol: body.symbol,
     action: body.action,
     quantity: body.quantity,

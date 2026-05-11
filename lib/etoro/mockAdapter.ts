@@ -89,7 +89,7 @@ export class MockEToroAdapter implements IEToroAdapter {
       throw new EToroAdapterError("LIVE_TRADING_DISABLED", "Live order placement is disabled. Paper trading remains available.");
     }
 
-    if (isKillSwitchActive()) {
+    if (await isKillSwitchActive()) {
       throw new EToroAdapterError("KILL_SWITCH_ACTIVE", "Kill switch is active. Order placement is halted.");
     }
 

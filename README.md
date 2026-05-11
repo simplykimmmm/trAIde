@@ -70,6 +70,8 @@ FINNHUB_API_KEY=your_finnhub_key
 GEMINI_API_KEY=your_gemini_key
 GEMINI_MODEL=gemini-flash-latest
 GEMINI_DELAY_MS=1200
+NEXT_PUBLIC_SUPABASE_URL=your_supabase_project_url
+SUPABASE_SERVICE_ROLE_KEY=your_supabase_service_role_key
 LIVE_TRADING=false
 USE_REAL_ETORO=false
 WATCHLIST=SPY,QQQ,AAPL,MSFT,GOOGL,BTC/USD,ETH/USD
@@ -93,7 +95,18 @@ PAPER_EXPOSURE_MULTIPLIER=20
 MAX_ACCOUNT_RISK_PCT=1
 ```
 
-If the deployed header says `DATA: MOCK`, `FINNHUB_API_KEY` is missing or unavailable in that Vercel environment. If it says `BOT: PAUSED`, click Start in the dashboard. SQLite storage on Vercel serverless is ephemeral, so bot state and paper trades can reset; use a hosted database before relying on deployed persistence.
+If the deployed header says `DATA: MOCK`, `FINNHUB_API_KEY` is missing or unavailable in that Vercel environment. If it says `BOT: PAUSED`, click Start in the dashboard. If Supabase variables are missing, the app falls back to SQLite; SQLite storage on Vercel serverless is ephemeral, so bot state and paper trades can reset between deployments or cold starts.
+
+## Supabase Storage
+
+Supabase is optional locally but recommended on Vercel for persistent paper trades, account state, bot settings, and the kill switch. Create a Supabase project, open the SQL editor, and run [supabase/schema.sql](supabase/schema.sql). Then add these Vercel environment variables:
+
+```bash
+NEXT_PUBLIC_SUPABASE_URL=your_supabase_project_url
+SUPABASE_SERVICE_ROLE_KEY=your_supabase_service_role_key
+```
+
+The service role key is server-only. Keep it marked sensitive in Vercel and never expose it in client components.
 
 ## Paper Trading
 

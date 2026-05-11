@@ -25,7 +25,7 @@ type AccountResponse = {
     host: "local" | "vercel";
     hasFinnhubKey: boolean;
     hasGeminiKey: boolean;
-    storage: "local-sqlite" | "ephemeral-sqlite";
+    storage: "local-sqlite" | "ephemeral-sqlite" | "supabase";
     warnings: string[];
   };
   account: {

@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { getMarketDataProvider } from "@/lib/market";
 import { getTradingSession } from "@/lib/market/session";
 import { getEffectivePaperRiskConfig } from "@/lib/risk/config";
-import { getBotSettings, getOpenPaperTrades, getPaperAccount, isBotRunning, isKillSwitchActive } from "@/lib/paper/database";
+import { getBotSettings, getOpenPaperTrades, getPaperAccount, getPaperStorageProvider, isBotRunning, isKillSwitchActive } from "@/lib/paper/database";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -17,10 +17,11 @@ export async function GET() {
   const hasGeminiKey = Boolean(process.env.GEMINI_API_KEY);
   const botRunning = await isBotRunning();
   const session = getTradingSession();
+  const storageProvider = getPaperStorageProvider();
   const deploymentWarnings = [
     !hasFinnhubKey ? "FINNHUB_API_KEY is missing in this deployment, so market data falls back to mock quotes." : null,
     !hasGeminiKey ? "GEMINI_API_KEY is missing in this deployment, so AI analysis falls back to cautious mock HOLD responses." : null,
-    isVercel ? "SQLite state on Vercel serverless storage can reset between deployments or cold starts. Use a hosted database for persistent bot/trade state." : null,
+    isVercel && storageProvider === "sqlite" ? "SQLite state on Vercel serverless storage can reset between deployments or cold starts. Add Supabase env vars for persistent bot/trade state." : null,
     !botRunning ? "Bot is paused. Click Start to begin the paper refresh loop; trades still require manual approval." : null,
   ].filter((warning): warning is string => Boolean(warning));
 
@@ -36,7 +37,7 @@ export async function GET() {
       host: isVercel ? "vercel" : "local",
       hasFinnhubKey,
       hasGeminiKey,
-      storage: isVercel ? "ephemeral-sqlite" : "local-sqlite",
+      storage: storageProvider === "supabase" ? "supabase" : isVercel ? "ephemeral-sqlite" : "local-sqlite",
       warnings: deploymentWarnings,
     },
     account: {
