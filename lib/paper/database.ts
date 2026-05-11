@@ -288,7 +288,7 @@ export async function getBotSettings(): Promise<BotSettings> {
 
   return {
     refreshIntervalMinutes,
-    refreshIntervalMs: refreshIntervalMinutes * 60_000,
+    refreshIntervalMs: refreshIntervalMinutes * 1_000,
     speedMultiplier,
     riskMultiplier,
   };
