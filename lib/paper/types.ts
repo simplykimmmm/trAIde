@@ -1,6 +1,6 @@
 import type { TradeSide } from "@/lib/etoro/types";
 
-export type PaperTradeStatus = "OPEN" | "CLOSED_TP" | "CLOSED_SL" | "CLOSED_MANUAL" | "REJECTED";
+export type PaperTradeStatus = "OPEN" | "CLOSED_TP" | "CLOSED_QUICK_TP" | "CLOSED_SL" | "CLOSED_MANUAL" | "REJECTED";
 
 export type PaperTrade = {
   id: number;

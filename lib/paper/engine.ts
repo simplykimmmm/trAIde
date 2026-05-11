@@ -83,11 +83,6 @@ export async function applyPriceUpdate(symbol: string, currentPrice: number): Pr
   for (const trade of openTrades) {
     const hitTakeProfit = trade.action === "BUY" ? currentPrice >= trade.take_profit : currentPrice <= trade.take_profit;
     const hitStopLoss = trade.action === "BUY" ? currentPrice <= trade.stop_loss : currentPrice >= trade.stop_loss;
-
-    if (!hitTakeProfit && !hitStopLoss) {
-      continue;
-    }
-
     const exit = modelExitExecution(trade, currentPrice, hitStopLoss);
     const grossPnl =
       trade.action === "BUY"
@@ -95,7 +90,13 @@ export async function applyPriceUpdate(symbol: string, currentPrice: number): Pr
         : (trade.entry_price - exit.fillPrice) * trade.quantity;
     const closingFee = exit.fee;
     const netPnl = roundMoney(grossPnl - closingFee);
-    const status = hitTakeProfit ? "CLOSED_TP" : "CLOSED_SL";
+    const hitQuickTakeProfit = shouldQuickTakeProfit(trade, netPnl, hitTakeProfit, hitStopLoss);
+
+    if (!hitTakeProfit && !hitStopLoss && !hitQuickTakeProfit) {
+      continue;
+    }
+
+    const status = hitStopLoss ? "CLOSED_SL" : hitTakeProfit ? "CLOSED_TP" : "CLOSED_QUICK_TP";
     const account = await getPaperAccount();
 
     await updatePaperAccount({
@@ -146,6 +147,19 @@ function modelExitExecution(trade: PaperTrade, marketPrice: number, stopLossHit:
     fillPrice: roundPrice(fillPrice),
     fee: calculateExecutionFee(trade.quantity * fillPrice),
   };
+}
+
+function shouldQuickTakeProfit(trade: PaperTrade, netPnl: number, hitTakeProfit: boolean, hitStopLoss: boolean): boolean {
+  if (process.env.PAPER_QUICK_TAKE_PROFIT === "false" || hitTakeProfit || hitStopLoss || netPnl <= 0) {
+    return false;
+  }
+
+  const notional = Math.max(trade.quantity * trade.entry_price, 0);
+  const quickProfitPct = readNumber("PAPER_QUICK_TAKE_PROFIT_PCT", 0.0015);
+  const minProfitUsd = readNumber("PAPER_QUICK_TAKE_PROFIT_MIN_USD", 5);
+  const targetProfit = Math.max(minProfitUsd, notional * quickProfitPct);
+
+  return netPnl >= targetProfit;
 }
 
 function executionCostBps(symbol: string, notional: number, stopLossHit: boolean): number {
