@@ -23,3 +23,12 @@ input,
 select {
   font: inherit;
 }
+
+main > div > .mb-4.rounded.border.border-line.bg-white.px-4.py-3.text-sm.text-ink.shadow-panel {
+  position: fixed;
+  right: 1rem;
+  bottom: 1rem;
+  z-index: 50;
+  margin-bottom: 0;
+  max-width: min(24rem, calc(100vw - 2rem));
+}
