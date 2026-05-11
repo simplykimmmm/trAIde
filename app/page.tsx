@@ -227,19 +227,48 @@ export default function DashboardPage() {
     }
 
     try {
-      const [analysisRes, opportunitiesRes, suggestRes] = await Promise.all([
-        fetch("/api/analysis", { cache: "no-store" }),
-        fetch("/api/opportunities", { cache: "no-store" }),
-        fetch(`/api/suggest?mode=${mode}`, { cache: "no-store" }),
+      const [analysisResult, opportunitiesResult, suggestResult] = await Promise.allSettled([
+        fetchJson("/api/analysis"),
+        fetchJson("/api/opportunities"),
+        fetchJson(`/api/suggest?mode=${mode}`),
       ]);
 
-      if (!analysisRes.ok || !opportunitiesRes.ok || !suggestRes.ok) {
-        throw new Error("Strategy refresh failed");
+      const failures = [analysisResult, opportunitiesResult, suggestResult].filter((result) => result.status === "rejected");
+
+      if (analysisResult.status === "fulfilled") {
+        setAnalyses(analysisResult.value.analyses ?? []);
       }
 
-      setAnalyses((await analysisRes.json()).analyses ?? []);
-      setOpportunities((await opportunitiesRes.json()).opportunities ?? []);
-      setSuggestions((await suggestRes.json()).suggestions ?? []);
+      if (opportunitiesResult.status === "fulfilled") {
+        setOpportunities(opportunitiesResult.value.opportunities ?? []);
+      }
+
+      if (suggestResult.status === "fulfilled") {
+        setSuggestions(suggestResult.value.suggestions ?? []);
+      }
+
+      const rateLimited =
+        hasRateLimitMessage(analysisResult.status === "fulfilled" ? analysisResult.value : null) ||
+        hasRateLimitMessage(opportunitiesResult.status === "fulfilled" ? opportunitiesResult.value : null) ||
+        hasRateLimitMessage(suggestResult.status === "fulfilled" ? suggestResult.value : null) ||
+        failures.some((result) => result.status === "rejected" && String(result.reason).toLowerCase().includes("rate limit"));
+
+      if (rateLimited) {
+        setMessage("Finnhub rate limit reached. Strategy refresh is paused until market data can be verified.");
+        setNotice({
+          text: "Finnhub rate limit reached. Keeping trading fail-closed.",
+          tone: "warning",
+        });
+        return;
+      }
+
+      if (failures.length) {
+        setMessage("Some strategy data could not refresh. Existing verified dashboard data was kept.");
+        setNotice({
+          text: "Partial strategy refresh. No unverified trades were suggested.",
+          tone: "warning",
+        });
+      }
     } catch {
       setMessage("Strategy refresh failed. Suggestions remain unavailable until data can be verified.");
     } finally {
@@ -1116,6 +1145,36 @@ function getActionCopy(
   }
 
   return null;
+}
+
+async function fetchJson(url: string): Promise<Record<string, any>> {
+  const response = await fetch(url, { cache: "no-store" });
+
+  if (!response.ok) {
+    throw new Error(`${url} returned ${response.status}`);
+  }
+
+  return await response.json();
+}
+
+function hasRateLimitMessage(value: unknown): boolean {
+  if (!value) {
+    return false;
+  }
+
+  if (typeof value === "string") {
+    return value.toLowerCase().includes("rate limit");
+  }
+
+  if (Array.isArray(value)) {
+    return value.some(hasRateLimitMessage);
+  }
+
+  if (typeof value === "object") {
+    return Object.values(value).some(hasRateLimitMessage);
+  }
+
+  return false;
 }
 
 function PnlChart({ points }: { points: Array<{ label: string; value: number }> }) {
