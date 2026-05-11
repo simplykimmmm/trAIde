@@ -143,7 +143,7 @@ export default function DashboardPage() {
   const [loading, setLoading] = useState(true);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
-  const [draftSpeedLevel, setDraftSpeedLevel] = useState(60);
+  const [draftSpeedLevel, setDraftSpeedLevel] = useState(1);
   const [draftRiskMultiplier, setDraftRiskMultiplier] = useState(5);
 
   const activityRows = useMemo(() => buildActivityRows(suggestions, positions, trades), [positions, suggestions, trades]);
@@ -158,8 +158,8 @@ export default function DashboardPage() {
   const killActive = account?.killSwitchActive === true;
   const botRunning = account?.botRunning === true && !killActive;
   const deploymentWarnings = account?.deployment.warnings ?? [];
-  const draftRefreshMinutes = speedLevelToMinutes(draftSpeedLevel);
-  const draftSpeedMultiplier = calculateSpeedMultiplier(draftRefreshMinutes);
+  const draftRefreshSeconds = speedLevelToSeconds(draftSpeedLevel);
+  const draftSpeedMultiplier = calculateSpeedMultiplier(draftRefreshSeconds);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -196,7 +196,7 @@ export default function DashboardPage() {
       return;
     }
 
-    setDraftSpeedLevel(minutesToSpeedLevel(account.botSettings.refreshIntervalMinutes));
+    setDraftSpeedLevel(secondsToSpeedLevel(account.botSettings.refreshIntervalMinutes));
     setDraftRiskMultiplier(account.botSettings.riskMultiplier);
   }, [account?.botSettings]);
 
@@ -220,7 +220,7 @@ export default function DashboardPage() {
     });
     const payload = await response.json();
     const autoPaper = account?.autoPaperTradingEnabled === true;
-    setMessage(payload.error === "KILL_SWITCH_ACTIVE" ? "Cannot start while the kill switch is active." : running ? `Paper bot started. Suggestions refresh every ${payload.settings.refreshIntervalMinutes} minute(s)${autoPaper ? " and eligible paper trades open automatically after risk checks." : "; trades still need manual approval."}` : "Paper bot paused.");
+    setMessage(payload.error === "KILL_SWITCH_ACTIVE" ? "Cannot start while the kill switch is active." : running ? `Paper bot started. Suggestions refresh every ${payload.settings.refreshIntervalMinutes} second(s)${autoPaper ? " and eligible paper trades open automatically after risk checks." : "; trades still need manual approval."}` : "Paper bot paused.");
     await refresh();
   }
 
@@ -234,20 +234,20 @@ export default function DashboardPage() {
       }),
     });
     const payload = await response.json();
-    setMessage(`Bot speed ${payload.settings.refreshIntervalMinutes} minute(s), risk ${payload.settings.riskMultiplier}x.`);
+    setMessage(`Bot speed ${payload.settings.refreshIntervalMinutes} second(s), risk ${payload.settings.riskMultiplier}x.`);
     await refresh();
   }
 
   function handleSpeedDraft(nextSpeedLevel: number) {
     const clampedSpeed = clamp(nextSpeedLevel, 1, 60);
-    const nextMinutes = speedLevelToMinutes(clampedSpeed);
-    const nextSpeedMultiplier = calculateSpeedMultiplier(nextMinutes);
+    const nextSeconds = speedLevelToSeconds(clampedSpeed);
+    const nextSpeedMultiplier = calculateSpeedMultiplier(nextSeconds);
     setDraftSpeedLevel(clampedSpeed);
     setDraftRiskMultiplier(nextSpeedMultiplier);
   }
 
   function commitSpeed(speedLevel = draftSpeedLevel) {
-    void updateBotSettings({ refreshIntervalMinutes: speedLevelToMinutes(speedLevel) });
+    void updateBotSettings({ refreshIntervalMinutes: speedLevelToSeconds(speedLevel) });
   }
 
   function commitRisk(riskMultiplier = draftRiskMultiplier) {
@@ -453,10 +453,10 @@ export default function DashboardPage() {
                 min={1}
                 max={60}
                 step={1}
-                display={`${draftRefreshMinutes} min`}
+                display={`${draftRefreshSeconds} sec`}
                 hint={`Speed multiplier: ${draftSpeedMultiplier}x`}
-                minLabel="Slow"
-                maxLabel="Fast"
+                minLabel="1 sec"
+                maxLabel="60 sec"
                 onChange={handleSpeedDraft}
                 onCommit={commitSpeed}
               />
@@ -910,16 +910,16 @@ function MoveBadge({ type }: { type: MoveType }) {
   );
 }
 
-function minutesToSpeedLevel(minutes: number): number {
-  return 61 - clamp(Math.round(minutes), 1, 60);
+function secondsToSpeedLevel(seconds: number): number {
+  return clamp(Math.round(seconds), 1, 60);
 }
 
-function speedLevelToMinutes(speedLevel: number): number {
-  return 61 - clamp(Math.round(speedLevel), 1, 60);
+function speedLevelToSeconds(speedLevel: number): number {
+  return clamp(Math.round(speedLevel), 1, 60);
 }
 
-function calculateSpeedMultiplier(refreshIntervalMinutes: number): number {
-  return Math.round((1 + ((60 - refreshIntervalMinutes) / 59) * 4) * 10) / 10;
+function calculateSpeedMultiplier(refreshIntervalSeconds: number): number {
+  return Math.round((1 + ((60 - refreshIntervalSeconds) / 59) * 4) * 10) / 10;
 }
 
 function clamp(value: number, min: number, max: number): number {
