@@ -8,6 +8,7 @@ type Mode = "paper" | "live";
 type AccountResponse = {
   marketDataProvider: "finnhub" | "mock-etoro";
   liveTradingEnabled: boolean;
+  autoPaperTradingEnabled: boolean;
   killSwitchActive: boolean;
   botRunning: boolean;
   botSettings: {
@@ -218,7 +219,8 @@ export default function DashboardPage() {
       body: JSON.stringify({ running }),
     });
     const payload = await response.json();
-    setMessage(payload.error === "KILL_SWITCH_ACTIVE" ? "Cannot start while the kill switch is active." : running ? `Paper bot started. Suggestions refresh every ${payload.settings.refreshIntervalMinutes} minute(s); trades still need manual approval.` : "Paper bot paused.");
+    const autoPaper = account?.autoPaperTradingEnabled === true;
+    setMessage(payload.error === "KILL_SWITCH_ACTIVE" ? "Cannot start while the kill switch is active." : running ? `Paper bot started. Suggestions refresh every ${payload.settings.refreshIntervalMinutes} minute(s)${autoPaper ? " and eligible paper trades open automatically after risk checks." : "; trades still need manual approval."}` : "Paper bot paused.");
     await refresh();
   }
 
@@ -320,6 +322,11 @@ export default function DashboardPage() {
             {account?.session.cryptoOnly ? (
               <span className="rounded bg-indigo-100 px-2.5 py-1 text-xs font-semibold text-indigo-800">
                 SESSION: CRYPTO WEEKEND
+              </span>
+            ) : null}
+            {account?.autoPaperTradingEnabled ? (
+              <span className="rounded bg-emerald-100 px-2.5 py-1 text-xs font-semibold text-emerald-800">
+                AUTO PAPER
               </span>
             ) : null}
             <span className={`rounded px-2.5 py-1 text-xs font-semibold ${botRunning ? "bg-emerald-100 text-emerald-800" : "bg-slate-100 text-slate-700"}`}>

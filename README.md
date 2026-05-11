@@ -73,6 +73,7 @@ GEMINI_DELAY_MS=1200
 NEXT_PUBLIC_SUPABASE_URL=your_supabase_project_url
 SUPABASE_SERVICE_ROLE_KEY=your_supabase_service_role_key
 LIVE_TRADING=false
+AUTO_PAPER_TRADING=true
 USE_REAL_ETORO=false
 WATCHLIST=SPY,QQQ,AAPL,MSFT,GOOGL,BTC/USD,ETH/USD
 ALLOW_LEVERAGE=true
@@ -120,15 +121,15 @@ Aggressive simulation is available through `PAPER_EXPOSURE_MULTIPLIER` and `ALLO
 
 Paper trades use a flat `$1` transaction fee on open and another `$1` fee on close. The dashboard shows stake/notional, fees paid, realized PnL, unrealized PnL, and a paper PnL graph.
 
-The Start button enables a paper-bot refresh loop using the dashboard speed setting. It does not auto-approve trades; manual approval is still required. The kill switch pauses the loop immediately.
+The Start button enables a paper-bot refresh loop using the dashboard speed setting. If `AUTO_PAPER_TRADING=true`, suggestions that pass a fresh risk check are opened automatically in paper mode while the bot is running. This never enables autonomous live trading. The kill switch pauses the loop immediately.
 
 ## Opportunity Scanner
 
 The server-side opportunity scanner uses Finnhub quotes, market news, and recent candles when `FINNHUB_API_KEY` is configured. It ranks broader stock and crypto candidates from `OPPORTUNITY_UNIVERSE`, looks for news-linked symbols, RSI/ATR-confirmed high volatility, regime-filtered momentum, and drop-bounce setups, then sends qualifying non-mock ideas through the same risk engine as watchlist trades.
 
-When `WEEKEND_CRYPTO_ONLY=true`, the app switches to crypto-only scanning from Friday after the normal US equity close window through Monday premarket. During that window, stock symbols are filtered out of analysis, suggestions, and manual approvals; crypto symbols such as `BTC/USD`, `ETH/USD`, `SOL/USD`, and `DOGE/USD` remain available in paper mode.
+When `WEEKEND_CRYPTO_ONLY=true`, the app switches to crypto-only scanning from Friday after the normal US equity close window through Monday premarket. During that window, stock symbols are filtered out of analysis, suggestions, auto paper execution, and manual approvals; crypto symbols such as `BTC/USD`, `ETH/USD`, `SOL/USD`, and `DOGE/USD` remain available in paper mode.
 
-This is still an educational paper-trading feature. It cannot guarantee profit, it can be wrong or stale, and it does not bypass manual approval, the kill switch, max position limits, stale data checks, or live-trading locks.
+This is still an educational paper-trading feature. It cannot guarantee profit, it can be wrong or stale, and it does not bypass the kill switch, max position limits, stale data checks, or live-trading locks.
 
 ## eToro Public API
 

@@ -22,13 +22,14 @@ export async function GET() {
     !hasFinnhubKey ? "FINNHUB_API_KEY is missing in this deployment, so market data falls back to mock quotes." : null,
     !hasGeminiKey ? "GEMINI_API_KEY is missing in this deployment, so AI analysis falls back to cautious mock HOLD responses." : null,
     isVercel && storageProvider === "sqlite" ? "SQLite state on Vercel serverless storage can reset between deployments or cold starts. Add Supabase env vars for persistent bot/trade state." : null,
-    !botRunning ? "Bot is paused. Click Start to begin the paper refresh loop; trades still require manual approval." : null,
+    !botRunning ? `Bot is paused. Click Start to begin the paper refresh loop${process.env.AUTO_PAPER_TRADING === "true" ? " and open paper trades automatically after risk checks" : "; trades need manual approval"}.` : null,
   ].filter((warning): warning is string => Boolean(warning));
 
   return NextResponse.json({
     mode: "paper",
     marketDataProvider: getMarketDataProvider(),
     liveTradingEnabled: process.env.LIVE_TRADING === "true",
+    autoPaperTradingEnabled: process.env.AUTO_PAPER_TRADING === "true",
     killSwitchActive: await isKillSwitchActive(),
     botRunning,
     botSettings: await getBotSettings(),
