@@ -143,6 +143,7 @@ export default function DashboardPage() {
   const [loading, setLoading] = useState(true);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+  const [uiTick, setUiTick] = useState(0);
   const [draftSpeedLevel, setDraftSpeedLevel] = useState(1);
   const [draftRiskMultiplier, setDraftRiskMultiplier] = useState(5);
 
@@ -160,35 +161,65 @@ export default function DashboardPage() {
   const deploymentWarnings = account?.deployment.warnings ?? [];
   const draftRefreshSeconds = speedLevelToSeconds(draftSpeedLevel);
   const draftSpeedMultiplier = calculateSpeedMultiplier(draftRefreshSeconds);
+  const localHeartbeat = useMemo(() => new Date().toLocaleTimeString(), [uiTick]);
 
-  const refresh = useCallback(async () => {
-    setLoading(true);
-    setMessage(null);
+  const refreshFastData = useCallback(async () => {
     try {
-      const [accountRes, positionsRes, analysisRes, opportunitiesRes, suggestRes, tradesRes] = await Promise.all([
+      const [accountRes, positionsRes, tradesRes] = await Promise.all([
         fetch("/api/account", { cache: "no-store" }),
         fetch("/api/positions", { cache: "no-store" }),
-        fetch("/api/analysis", { cache: "no-store" }),
-        fetch("/api/opportunities", { cache: "no-store" }),
-        fetch(`/api/suggest?mode=${mode}`, { cache: "no-store" }),
         fetch("/api/paper-trades", { cache: "no-store" }),
       ]);
 
       setAccount(await accountRes.json());
       setPositions((await positionsRes.json()).positions ?? []);
+      setTrades((await tradesRes.json()).trades ?? []);
+    } catch {
+      setMessage("Fast dashboard refresh failed. Positions and account data may be stale.");
+    }
+  }, []);
+
+  const refreshSlowData = useCallback(async () => {
+    try {
+      const [analysisRes, opportunitiesRes, suggestRes] = await Promise.all([
+        fetch("/api/analysis", { cache: "no-store" }),
+        fetch("/api/opportunities", { cache: "no-store" }),
+        fetch(`/api/suggest?mode=${mode}`, { cache: "no-store" }),
+      ]);
+
       setAnalyses((await analysisRes.json()).analyses ?? []);
       setOpportunities((await opportunitiesRes.json()).opportunities ?? []);
       setSuggestions((await suggestRes.json()).suggestions ?? []);
-      setTrades((await tradesRes.json()).trades ?? []);
     } catch {
-      setMessage("Dashboard refresh failed. Trading suggestions remain unavailable until data can be verified.");
-    } finally {
-      setLoading(false);
+      setMessage("Strategy refresh failed. Suggestions remain unavailable until data can be verified.");
     }
   }, [mode]);
 
+  const refresh = useCallback(async () => {
+    setLoading(true);
+    setMessage(null);
+    await Promise.all([refreshFastData(), refreshSlowData()]);
+    setLoading(false);
+  }, [refreshFastData, refreshSlowData]);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      setUiTick((tick) => tick + 1);
+    }, 100);
+
+    return () => window.clearInterval(timer);
+  }, []);
+
   useEffect(() => {
     void refresh();
+  }, [refresh]);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      void refresh();
+    }, 60_000);
+
+    return () => window.clearInterval(timer);
   }, [refresh]);
 
   useEffect(() => {
@@ -206,11 +237,23 @@ export default function DashboardPage() {
     }
 
     const timer = window.setInterval(() => {
-      void refresh();
-    }, account.botSettings.refreshIntervalMs);
+      void refreshFastData();
+    }, 2000);
 
     return () => window.clearInterval(timer);
-  }, [account?.botRunning, account?.botSettings.refreshIntervalMs, killActive, refresh]);
+  }, [account?.botRunning, killActive, refreshFastData]);
+
+  useEffect(() => {
+    if (!account?.botRunning || killActive) {
+      return;
+    }
+
+    const timer = window.setInterval(() => {
+      void refreshSlowData();
+    }, 30_000);
+
+    return () => window.clearInterval(timer);
+  }, [account?.botRunning, killActive, refreshSlowData]);
 
   async function setBotActive(running: boolean) {
     const response = await fetch("/api/bot-state", {
@@ -235,7 +278,7 @@ export default function DashboardPage() {
     });
     const payload = await response.json();
     setMessage(`Bot speed ${payload.settings.refreshIntervalMinutes} second(s), risk ${payload.settings.riskMultiplier}x.`);
-    await refresh();
+    await refreshFastData();
   }
 
   function handleSpeedDraft(nextSpeedLevel: number) {
@@ -257,7 +300,7 @@ export default function DashboardPage() {
   async function triggerKillSwitch() {
     await fetch("/api/kill-switch", { method: "POST", body: JSON.stringify({ active: true }) });
     setMessage("Kill switch activated. All new trade activity is halted.");
-    await refresh();
+    await refreshFastData();
   }
 
   async function clearKillSwitch() {
@@ -268,7 +311,7 @@ export default function DashboardPage() {
 
     await fetch("/api/kill-switch", { method: "POST", body: JSON.stringify({ active: false }) });
     setMessage("Kill switch cleared. Paper trading activity is available again, subject to risk checks.");
-    await refresh();
+    await refreshFastData();
   }
 
   async function submitDecision(suggestion: Suggestion, decision: "APPROVE" | "REJECT") {
@@ -331,6 +374,15 @@ export default function DashboardPage() {
             ) : null}
             <span className={`rounded px-2.5 py-1 text-xs font-semibold ${botRunning ? "bg-emerald-100 text-emerald-800" : "bg-slate-100 text-slate-700"}`}>
               BOT: {botRunning ? "RUNNING" : "PAUSED"}
+            </span>
+            <span className="rounded bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-700">
+              UI refresh: 100ms
+            </span>
+            <span className="rounded bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-700">
+              Market/API refresh: rate-limited
+            </span>
+            <span className="rounded bg-slate-50 px-2.5 py-1 text-xs font-medium text-slate-500">
+              Local tick {localHeartbeat}
             </span>
             {killActive ? (
               <span className="inline-flex items-center gap-1 rounded bg-red-50 px-2.5 py-1 text-xs font-semibold text-red-800">
