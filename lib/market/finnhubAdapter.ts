@@ -1,4 +1,5 @@
 import type { MarketQuote } from "@/lib/etoro/types";
+import { getFinnhubCached } from "./finnhubRateLimiter";
 
 const FINNHUB_BASE_URL = "https://finnhub.io/api/v1";
 
@@ -73,20 +74,24 @@ export class FinnhubAdapter {
       token: this.apiKey,
     });
 
-    const response = await fetch(`${FINNHUB_BASE_URL}/quote?${params.toString()}`, {
-      method: "GET",
-      cache: "no-store",
+    const cacheTtlMs = readNumber("FINNHUB_QUOTE_CACHE_MS", 15_000);
+    const data = await getFinnhubCached(`quote:${finnhubSymbol}`, cacheTtlMs, async () => {
+      const response = await fetch(`${FINNHUB_BASE_URL}/quote?${params.toString()}`, {
+        method: "GET",
+        cache: "no-store",
+      });
+
+      if (response.status === 429) {
+        throw new Error("Finnhub rate limit reached.");
+      }
+
+      if (!response.ok) {
+        throw new Error(`Finnhub quote request failed with HTTP ${response.status}.`);
+      }
+
+      return (await response.json()) as FinnhubQuoteResponse;
     });
 
-    if (response.status === 429) {
-      throw new Error("Finnhub rate limit reached.");
-    }
-
-    if (!response.ok) {
-      throw new Error(`Finnhub quote request failed with HTTP ${response.status}.`);
-    }
-
-    const data = (await response.json()) as FinnhubQuoteResponse;
     if (typeof data.c !== "number" || data.c <= 0) {
       throw new Error(`Finnhub did not return a usable quote for ${normalized}.`);
     }
@@ -116,20 +121,23 @@ export class FinnhubAdapter {
     }
 
     const params = new URLSearchParams({ category, token: this.apiKey });
-    const response = await fetch(`${FINNHUB_BASE_URL}/news?${params.toString()}`, {
-      method: "GET",
-      cache: "no-store",
+    const cacheTtlMs = readNumber("FINNHUB_NEWS_CACHE_MS", 60_000);
+    const data = await getFinnhubCached(`news:${category}`, cacheTtlMs, async () => {
+      const response = await fetch(`${FINNHUB_BASE_URL}/news?${params.toString()}`, {
+        method: "GET",
+        cache: "no-store",
+      });
+
+      if (response.status === 429) {
+        throw new Error("Finnhub rate limit reached.");
+      }
+
+      if (!response.ok) {
+        throw new Error(`Finnhub news request failed with HTTP ${response.status}.`);
+      }
+
+      return (await response.json()) as unknown;
     });
-
-    if (response.status === 429) {
-      throw new Error("Finnhub rate limit reached.");
-    }
-
-    if (!response.ok) {
-      throw new Error(`Finnhub news request failed with HTTP ${response.status}.`);
-    }
-
-    const data = (await response.json()) as unknown;
     return Array.isArray(data) ? data.slice(0, 50) as FinnhubNewsItem[] : [];
   }
 
@@ -150,20 +158,23 @@ export class FinnhubAdapter {
       token: this.apiKey,
     });
     const path = finnhubSymbol.includes(":") ? "crypto/candle" : "stock/candle";
-    const response = await fetch(`${FINNHUB_BASE_URL}/${path}?${params.toString()}`, {
-      method: "GET",
-      cache: "no-store",
+    const cacheTtlMs = readNumber("FINNHUB_CANDLE_CACHE_MS", 60_000);
+    const data = await getFinnhubCached(`candles:${path}:${finnhubSymbol}:${resolution}:${lookbackMinutes}`, cacheTtlMs, async () => {
+      const response = await fetch(`${FINNHUB_BASE_URL}/${path}?${params.toString()}`, {
+        method: "GET",
+        cache: "no-store",
+      });
+
+      if (response.status === 429) {
+        throw new Error("Finnhub rate limit reached.");
+      }
+
+      if (!response.ok) {
+        throw new Error(`Finnhub candle request failed with HTTP ${response.status}.`);
+      }
+
+      return (await response.json()) as FinnhubCandleResponse;
     });
-
-    if (response.status === 429) {
-      throw new Error("Finnhub rate limit reached.");
-    }
-
-    if (!response.ok) {
-      throw new Error(`Finnhub candle request failed with HTTP ${response.status}.`);
-    }
-
-    const data = (await response.json()) as FinnhubCandleResponse;
     if (data.s !== "ok" || !data.t?.length || !data.c?.length || !data.h?.length || !data.l?.length || !data.o?.length) {
       return [];
     }
@@ -177,4 +188,9 @@ export class FinnhubAdapter {
       volume: data.v?.[index] ?? 0,
     })).filter((candle) => candle.open > 0 && candle.high > 0 && candle.low > 0 && candle.close > 0);
   }
+}
+
+function readNumber(key: string, fallback: number): number {
+  const parsed = Number(process.env[key]);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
 }

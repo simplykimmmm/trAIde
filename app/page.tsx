@@ -227,11 +227,9 @@ export default function DashboardPage() {
     }
 
     try {
-      const [analysisResult, opportunitiesResult, suggestResult] = await Promise.allSettled([
-        fetchJson("/api/analysis"),
-        fetchJson("/api/opportunities"),
-        fetchJson(`/api/suggest?mode=${mode}`),
-      ]);
+      const analysisResult = await settleFetchJson("/api/analysis");
+      const opportunitiesResult = await settleFetchJson("/api/opportunities");
+      const suggestResult = await settleFetchJson(`/api/suggest?mode=${mode}`);
 
       const failures = [analysisResult, opportunitiesResult, suggestResult].filter((result) => result.status === "rejected");
 
@@ -1155,6 +1153,20 @@ async function fetchJson(url: string): Promise<Record<string, any>> {
   }
 
   return await response.json();
+}
+
+async function settleFetchJson(url: string): Promise<PromiseSettledResult<Record<string, any>>> {
+  try {
+    return {
+      status: "fulfilled",
+      value: await fetchJson(url),
+    };
+  } catch (reason) {
+    return {
+      status: "rejected",
+      reason,
+    };
+  }
 }
 
 function hasRateLimitMessage(value: unknown): boolean {
