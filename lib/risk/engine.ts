@@ -29,6 +29,14 @@ export function checkTradeAllowed(params: RiskCheckParams): RiskCheckResult {
     return reject("MAX_POSITIONS_REACHED", `Open positions ${params.openPositionsCount} reached limit ${config.maxOpenPositions}.`);
   }
 
+  if (!Number.isFinite(account.equity) || account.equity <= 0) {
+    return reject("ACCOUNT_RISK_LIMIT_HIT", "Account equity is depleted or unavailable.");
+  }
+
+  if (!Number.isFinite(account.availableCash) || account.availableCash <= 0) {
+    return reject("ACCOUNT_RISK_LIMIT_HIT", "Available cash is depleted or unavailable.");
+  }
+
   const dailyLossLimit = account.equity * config.maxDailyLossPct;
   if (account.dailyLoss >= dailyLossLimit) {
     return reject("DAILY_LOSS_LIMIT_HIT", `Daily loss ${account.dailyLoss} reached limit ${dailyLossLimit}.`);

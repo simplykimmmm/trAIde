@@ -1,9 +1,10 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Activity, AlertTriangle, Check, ListChecks, Pause, Play, Power, RefreshCw, ShieldAlert, ShieldCheck, X } from "lucide-react";
+import { Activity, AlertTriangle, Check, ListChecks, Loader2, Pause, Play, Power, RefreshCw, RotateCcw, ShieldAlert, ShieldCheck, X } from "lucide-react";
 
 type Mode = "paper" | "live";
+type ControlAction = "bot" | "refresh" | "kill" | "unhalt" | "settings" | "reset" | null;
 
 type AccountResponse = {
   marketDataProvider: "finnhub" | "mock-etoro";
@@ -141,6 +142,9 @@ export default function DashboardPage() {
   const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
   const [trades, setTrades] = useState<Trade[]>([]);
   const [loading, setLoading] = useState(true);
+  const [fastLoading, setFastLoading] = useState(false);
+  const [slowLoading, setSlowLoading] = useState(false);
+  const [controlBusy, setControlBusy] = useState<ControlAction>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [uiTick, setUiTick] = useState(0);
@@ -163,7 +167,11 @@ export default function DashboardPage() {
   const draftSpeedMultiplier = calculateSpeedMultiplier(draftRefreshSeconds);
   const localHeartbeat = useMemo(() => new Date().toLocaleTimeString(), [uiTick]);
 
-  const refreshFastData = useCallback(async () => {
+  const refreshFastData = useCallback(async (showLoading = false) => {
+    if (showLoading) {
+      setFastLoading(true);
+    }
+
     try {
       const [accountRes, positionsRes, tradesRes] = await Promise.all([
         fetch("/api/account", { cache: "no-store" }),
@@ -171,15 +179,27 @@ export default function DashboardPage() {
         fetch("/api/paper-trades", { cache: "no-store" }),
       ]);
 
+      if (!accountRes.ok || !positionsRes.ok || !tradesRes.ok) {
+        throw new Error("Fast refresh failed");
+      }
+
       setAccount(await accountRes.json());
       setPositions((await positionsRes.json()).positions ?? []);
       setTrades((await tradesRes.json()).trades ?? []);
     } catch {
       setMessage("Fast dashboard refresh failed. Positions and account data may be stale.");
+    } finally {
+      if (showLoading) {
+        setFastLoading(false);
+      }
     }
   }, []);
 
-  const refreshSlowData = useCallback(async () => {
+  const refreshSlowData = useCallback(async (showLoading = false) => {
+    if (showLoading) {
+      setSlowLoading(true);
+    }
+
     try {
       const [analysisRes, opportunitiesRes, suggestRes] = await Promise.all([
         fetch("/api/analysis", { cache: "no-store" }),
@@ -187,19 +207,40 @@ export default function DashboardPage() {
         fetch(`/api/suggest?mode=${mode}`, { cache: "no-store" }),
       ]);
 
+      if (!analysisRes.ok || !opportunitiesRes.ok || !suggestRes.ok) {
+        throw new Error("Strategy refresh failed");
+      }
+
       setAnalyses((await analysisRes.json()).analyses ?? []);
       setOpportunities((await opportunitiesRes.json()).opportunities ?? []);
       setSuggestions((await suggestRes.json()).suggestions ?? []);
     } catch {
       setMessage("Strategy refresh failed. Suggestions remain unavailable until data can be verified.");
+    } finally {
+      if (showLoading) {
+        setSlowLoading(false);
+      }
     }
   }, [mode]);
 
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(async (manual = false) => {
     setLoading(true);
-    setMessage(null);
-    await Promise.all([refreshFastData(), refreshSlowData()]);
-    setLoading(false);
+    if (manual) {
+      setControlBusy("refresh");
+      setMessage("Refreshing dashboard data...");
+    }
+
+    try {
+      await Promise.all([refreshFastData(manual), refreshSlowData(manual)]);
+      if (manual) {
+        setMessage("Dashboard refreshed. API calls stayed rate-limited.");
+      }
+    } finally {
+      setLoading(false);
+      if (manual) {
+        setControlBusy(null);
+      }
+    }
   }, [refreshFastData, refreshSlowData]);
 
   useEffect(() => {
@@ -256,29 +297,68 @@ export default function DashboardPage() {
   }, [account?.botRunning, killActive, refreshSlowData]);
 
   async function setBotActive(running: boolean) {
-    const response = await fetch("/api/bot-state", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ running }),
-    });
-    const payload = await response.json();
-    const autoPaper = account?.autoPaperTradingEnabled === true;
-    setMessage(payload.error === "KILL_SWITCH_ACTIVE" ? "Cannot start while the kill switch is active." : running ? `Paper bot started. Suggestions refresh every ${payload.settings.refreshIntervalMinutes} second(s)${autoPaper ? " and eligible paper trades open automatically after risk checks." : "; trades still need manual approval."}` : "Paper bot paused.");
-    await refresh();
+    setControlBusy("bot");
+    setMessage(running ? "Starting paper bot..." : "Pausing paper bot...");
+
+    try {
+      const response = await fetch("/api/bot-state", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ running }),
+      });
+      const payload = await response.json();
+      const autoPaper = account?.autoPaperTradingEnabled === true;
+
+      if (!response.ok || payload.error === "KILL_SWITCH_ACTIVE") {
+        setMessage("Cannot start while the kill switch is active.");
+        await refreshFastData(true);
+        return;
+      }
+
+      setAccount((current) => current ? {
+        ...current,
+        botRunning: payload.running,
+        killSwitchActive: payload.killSwitchActive,
+        botSettings: payload.settings,
+      } : current);
+      setMessage(running ? `Paper bot started. Suggestions refresh every ${payload.settings.refreshIntervalMinutes} second(s)${autoPaper ? " and eligible paper trades open automatically after risk checks." : "; trades still need manual approval."}` : "Paper bot paused.");
+      await refreshFastData(true);
+      if (running) {
+        void refreshSlowData(true);
+      }
+    } catch {
+      setMessage(running ? "Start failed. Bot state could not be saved." : "Pause failed. Bot state could not be saved.");
+    } finally {
+      setControlBusy(null);
+    }
   }
 
   async function updateBotSettings(settings: { refreshIntervalMinutes?: number; riskMultiplier?: number }) {
-    const response = await fetch("/api/bot-state", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        running: account?.botRunning === true,
-        ...settings,
-      }),
-    });
-    const payload = await response.json();
-    setMessage(`Bot speed ${payload.settings.refreshIntervalMinutes} second(s), risk ${payload.settings.riskMultiplier}x.`);
-    await refreshFastData();
+    setControlBusy("settings");
+    setMessage("Saving bot settings...");
+
+    try {
+      const response = await fetch("/api/bot-state", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          running: account?.botRunning === true,
+          ...settings,
+        }),
+      });
+      const payload = await response.json();
+
+      if (!response.ok) {
+        throw new Error("Settings update failed");
+      }
+
+      setMessage(`Bot speed ${payload.settings.refreshIntervalMinutes} second(s), risk ${payload.settings.riskMultiplier}x.`);
+      await refreshFastData(true);
+    } catch {
+      setMessage("Could not save bot settings.");
+    } finally {
+      setControlBusy(null);
+    }
   }
 
   function handleSpeedDraft(nextSpeedLevel: number) {
@@ -298,20 +378,74 @@ export default function DashboardPage() {
   }
 
   async function triggerKillSwitch() {
-    await fetch("/api/kill-switch", { method: "POST", body: JSON.stringify({ active: true }) });
-    setMessage("Kill switch activated. All new trade activity is halted.");
-    await refreshFastData();
+    setControlBusy("kill");
+    setMessage("Activating kill switch...");
+
+    try {
+      await fetch("/api/kill-switch", { method: "POST", body: JSON.stringify({ active: true }) });
+      setMessage("Kill switch activated. All new trade activity is halted.");
+      await refreshFastData(true);
+    } catch {
+      setMessage("Kill switch request failed.");
+    } finally {
+      setControlBusy(null);
+    }
   }
 
   async function clearKillSwitch() {
     const confirmed = window.confirm("Un-halt local paper trading? New suggestions and paper approvals will be allowed again after risk checks.");
     if (!confirmed) {
+      setMessage("Un-halt cancelled.");
       return;
     }
 
-    await fetch("/api/kill-switch", { method: "POST", body: JSON.stringify({ active: false }) });
-    setMessage("Kill switch cleared. Paper trading activity is available again, subject to risk checks.");
-    await refreshFastData();
+    setControlBusy("unhalt");
+    setMessage("Clearing kill switch...");
+
+    try {
+      await fetch("/api/kill-switch", { method: "POST", body: JSON.stringify({ active: false }) });
+      setMessage("Kill switch cleared. Paper trading activity is available again, subject to risk checks.");
+      await refreshFastData(true);
+      void refreshSlowData(true);
+    } catch {
+      setMessage("Un-halt request failed.");
+    } finally {
+      setControlBusy(null);
+    }
+  }
+
+  async function resetPaperAccount() {
+    const confirmed = window.confirm("Reset the paper simulation to $100,000 and clear all paper trades? This cannot be undone.");
+    if (!confirmed) {
+      setMessage("Paper reset cancelled.");
+      return;
+    }
+
+    setControlBusy("reset");
+    setMessage("Resetting paper simulation to $100,000...");
+
+    try {
+      const response = await fetch("/api/reset-paper", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ confirm: "RESET_PAPER", startingBalance: 100_000 }),
+      });
+
+      if (!response.ok) {
+        throw new Error("Paper reset failed");
+      }
+
+      setPositions([]);
+      setSuggestions([]);
+      setTrades([]);
+      setMessage("Paper simulation reset to $100,000. Bot is paused and old paper trades were cleared.");
+      await refreshFastData(true);
+      void refreshSlowData(true);
+    } catch {
+      setMessage("Paper reset failed. Nothing was changed.");
+    } finally {
+      setControlBusy(null);
+    }
   }
 
   async function submitDecision(suggestion: Suggestion, decision: "APPROVE" | "REJECT") {
@@ -323,27 +457,35 @@ export default function DashboardPage() {
     }
 
     setBusyId(suggestion.id);
-    const response = await fetch("/api/approve-trade", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        decision,
-        mode,
-        symbol: suggestion.symbol,
-        action: suggestion.action,
-        quantity: suggestion.quantity,
-        entryPrice: suggestion.entryPrice,
-        stopLoss: suggestion.stopLoss,
-        takeProfit: suggestion.takeProfit,
-        confidence: suggestion.confidence,
-        reasoning: suggestion.reasoning,
-        invalidationCondition: suggestion.invalidationCondition,
-      }),
-    });
-    const payload = await response.json();
-    setMessage(payload.accepted ? "Trade accepted after risk checks." : "Trade rejected and logged.");
-    setBusyId(null);
-    await refresh();
+    setMessage(decision === "APPROVE" ? `Approving ${suggestion.symbol}...` : `Rejecting ${suggestion.symbol}...`);
+
+    try {
+      const response = await fetch("/api/approve-trade", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          decision,
+          mode,
+          symbol: suggestion.symbol,
+          action: suggestion.action,
+          quantity: suggestion.quantity,
+          entryPrice: suggestion.entryPrice,
+          stopLoss: suggestion.stopLoss,
+          takeProfit: suggestion.takeProfit,
+          confidence: suggestion.confidence,
+          reasoning: suggestion.reasoning,
+          invalidationCondition: suggestion.invalidationCondition,
+        }),
+      });
+      const payload = await response.json();
+      setMessage(payload.accepted ? "Trade accepted after risk checks." : "Trade rejected and logged.");
+      await refreshFastData(true);
+      void refreshSlowData(true);
+    } catch {
+      setMessage("Trade decision failed. Nothing was changed.");
+    } finally {
+      setBusyId(null);
+    }
   }
 
   return (
@@ -394,33 +536,40 @@ export default function DashboardPage() {
           <div className="flex flex-wrap items-center gap-2">
             {botRunning ? (
               <button
-                className="inline-flex h-10 items-center gap-2 rounded border border-line bg-white px-3 text-sm font-semibold text-ink hover:bg-panel"
+                className="inline-flex h-10 items-center gap-2 rounded border border-line bg-white px-3 text-sm font-semibold text-ink hover:bg-panel disabled:opacity-60"
                 onClick={() => setBotActive(false)}
+                disabled={controlBusy === "bot"}
                 title="Pause paper bot refresh loop"
               >
-                <Pause size={16} /> Pause
+                {controlBusy === "bot" ? <ButtonSpinner /> : <Pause size={16} />} {controlBusy === "bot" ? "Pausing..." : "Pause"}
               </button>
             ) : (
               <button
                 className="inline-flex h-10 items-center gap-2 rounded bg-emerald-700 px-3 text-sm font-semibold text-white hover:bg-emerald-800 disabled:opacity-60"
                 onClick={() => setBotActive(true)}
-                disabled={killActive}
+                disabled={killActive || controlBusy === "bot"}
                 title="Start paper bot refresh loop"
               >
-                <Play size={16} /> Start
+                {controlBusy === "bot" ? <ButtonSpinner /> : <Play size={16} />} {controlBusy === "bot" ? "Starting..." : "Start"}
               </button>
             )}
             {liveAllowed ? (
               <div className="grid grid-cols-2 rounded border border-line bg-panel p-1">
                 <button
                   className={`rounded px-3 py-2 text-sm font-medium ${mode === "paper" ? "bg-white shadow-panel" : "text-slate-600"}`}
-                  onClick={() => setMode("paper")}
+                  onClick={() => {
+                    setMode("paper");
+                    setMessage("Paper mode selected.");
+                  }}
                 >
                   Paper
                 </button>
                 <button
                   className={`rounded px-3 py-2 text-sm font-medium ${mode === "live" ? "bg-red-700 text-white shadow-panel" : "text-slate-600"}`}
-                  onClick={() => setMode("live")}
+                  onClick={() => {
+                    setMode("live");
+                    setMessage("Live mode selected. Every live trade still requires manual approval.");
+                  }}
                 >
                   Live
                 </button>
@@ -429,26 +578,36 @@ export default function DashboardPage() {
             <button
               className="inline-flex h-10 items-center gap-2 rounded border border-red-200 bg-white px-3 text-sm font-semibold text-red-700 hover:bg-red-50 disabled:opacity-60"
               onClick={triggerKillSwitch}
-              disabled={killActive}
+              disabled={killActive || controlBusy === "kill"}
               title="Activate global kill switch"
             >
-              <Power size={16} /> Kill Switch
+              {controlBusy === "kill" ? <ButtonSpinner /> : <Power size={16} />} {controlBusy === "kill" ? "Halting..." : "Kill Switch"}
             </button>
             {killActive ? (
               <button
-                className="inline-flex h-10 items-center gap-2 rounded border border-emerald-200 bg-white px-3 text-sm font-semibold text-emerald-700 hover:bg-emerald-50"
+                className="inline-flex h-10 items-center gap-2 rounded border border-emerald-200 bg-white px-3 text-sm font-semibold text-emerald-700 hover:bg-emerald-50 disabled:opacity-60"
                 onClick={clearKillSwitch}
+                disabled={controlBusy === "unhalt"}
                 title="Clear local kill switch"
               >
-                <ShieldCheck size={16} /> Un-halt
+                {controlBusy === "unhalt" ? <ButtonSpinner /> : <ShieldCheck size={16} />} {controlBusy === "unhalt" ? "Un-halting..." : "Un-halt"}
               </button>
             ) : null}
             <button
-              className="inline-flex h-10 items-center gap-2 rounded border border-line bg-white px-3 text-sm font-semibold text-ink hover:bg-panel"
-              onClick={refresh}
+              className="inline-flex h-10 items-center gap-2 rounded border border-line bg-white px-3 text-sm font-semibold text-ink hover:bg-panel disabled:opacity-60"
+              onClick={resetPaperAccount}
+              disabled={controlBusy === "reset"}
+              title="Reset paper account to $100,000 and clear paper trades"
+            >
+              {controlBusy === "reset" ? <ButtonSpinner /> : <RotateCcw size={16} />} {controlBusy === "reset" ? "Resetting..." : "Reset Paper"}
+            </button>
+            <button
+              className="inline-flex h-10 items-center gap-2 rounded border border-line bg-white px-3 text-sm font-semibold text-ink hover:bg-panel disabled:opacity-60"
+              onClick={() => refresh(true)}
+              disabled={controlBusy === "refresh"}
               title="Refresh dashboard data"
             >
-              <RefreshCw size={16} /> Refresh
+              {controlBusy === "refresh" ? <ButtonSpinner /> : <RefreshCw size={16} />} {controlBusy === "refresh" ? "Refreshing..." : "Refresh"}
             </button>
           </div>
         </div>
@@ -477,6 +636,15 @@ export default function DashboardPage() {
           </div>
         ) : null}
         {message ? <div className="mb-4 rounded border border-line bg-white px-4 py-3 text-sm text-ink shadow-panel">{message}</div> : null}
+        {loading || fastLoading || slowLoading || controlBusy ? (
+          <div className="mb-4 flex flex-wrap items-center gap-2 rounded border border-line bg-white px-4 py-3 text-sm text-slate-700 shadow-panel">
+            <Loader2 size={16} className="animate-spin text-emerald-700" />
+            {controlBusy ? <span>Action in progress.</span> : null}
+            {loading ? <span>Dashboard loading.</span> : null}
+            {fastLoading ? <span>Account, positions, and trades updating.</span> : null}
+            {slowLoading ? <span>AI, scanner, and suggestions updating.</span> : null}
+          </div>
+        ) : null}
 
         <div className="grid gap-4 lg:grid-cols-12">
           <Panel title="Account Summary" className="lg:col-span-4">
@@ -681,15 +849,15 @@ export default function DashboardPage() {
                             onClick={() => submitDecision(suggestion, "APPROVE")}
                             title="Approve this trade"
                           >
-                            <Check size={15} /> Approve
+                            {busyId === suggestion.id ? <ButtonSpinner /> : <Check size={15} />} {busyId === suggestion.id ? "Working..." : "Approve"}
                           </button>
                           <button
-                            className="inline-flex h-9 items-center gap-1 rounded border border-line bg-white px-3 text-sm font-semibold text-ink"
+                            className="inline-flex h-9 items-center gap-1 rounded border border-line bg-white px-3 text-sm font-semibold text-ink disabled:opacity-60"
                             disabled={busyId === suggestion.id}
                             onClick={() => submitDecision(suggestion, "REJECT")}
                             title="Reject this trade"
                           >
-                            <X size={15} /> Reject
+                            {busyId === suggestion.id ? <ButtonSpinner /> : <X size={15} />} {busyId === suggestion.id ? "Working..." : "Reject"}
                           </button>
                         </div>
                       </td>
@@ -960,6 +1128,10 @@ function MoveBadge({ type }: { type: MoveType }) {
       <ListChecks size={13} /> {type}
     </span>
   );
+}
+
+function ButtonSpinner() {
+  return <Loader2 size={16} className="animate-spin" aria-hidden="true" />;
 }
 
 function secondsToSpeedLevel(seconds: number): number {

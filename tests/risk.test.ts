@@ -92,6 +92,14 @@ describe("checkTradeAllowed", () => {
     expect(result).toMatchObject({ allowed: false, reason: "MAX_POSITIONS_REACHED" });
   });
 
+  it("rejects when account equity or cash is depleted", () => {
+    const params = baseParams();
+    params.account.equity = 0;
+    params.account.availableCash = 0;
+
+    expect(checkTradeAllowed(params)).toMatchObject({ allowed: false, reason: "ACCOUNT_RISK_LIMIT_HIT" });
+  });
+
   it("rejects when the daily loss limit is already hit", () => {
     const params = baseParams();
     params.account.dailyLoss = params.account.equity * DEFAULT_RISK_CONFIG.maxDailyLossPct;

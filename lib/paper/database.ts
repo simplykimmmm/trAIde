@@ -67,6 +67,60 @@ export async function updatePaperAccount(
   return normalizePaperAccount(data);
 }
 
+export async function resetPaperTrading(startingBalance = 100_000): Promise<PaperAccount> {
+  await ensureSeedData();
+  const todayUtc = new Date().toISOString().slice(0, 10);
+  const balance = Number.isFinite(startingBalance) && startingBalance > 0 ? startingBalance : 100_000;
+  const supabase = getSupabaseAdmin();
+
+  if (!supabase) {
+    const db = getLocalDb();
+    db.prepare("DELETE FROM paper_trades").run();
+    db.prepare("UPDATE paper_account SET balance = ?, equity = ?, daily_loss = 0, last_reset_date = ? WHERE id = 1")
+      .run(balance, balance, todayUtc);
+    db.prepare("INSERT INTO system_state (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value")
+      .run("KILL_SWITCH", "false");
+    db.prepare("INSERT INTO system_state (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value")
+      .run("BOT_RUNNING", "false");
+    return getLocalPaperAccount();
+  }
+
+  const deleteTrades = await supabase
+    .from("paper_trades")
+    .delete()
+    .neq("id", -1);
+
+  if (deleteTrades.error) {
+    throw new Error(`Failed to clear paper trades: ${deleteTrades.error.message}`);
+  }
+
+  const { data, error } = await supabase
+    .from("paper_account")
+    .upsert({ id: 1, balance, equity: balance, daily_loss: 0, last_reset_date: todayUtc }, { onConflict: "id" })
+    .select("*")
+    .single();
+
+  if (error || !data) {
+    throw new Error(`Failed to reset paper account: ${error?.message}`);
+  }
+
+  const stateReset = await supabase
+    .from("system_state")
+    .upsert(
+      [
+        { key: "KILL_SWITCH", value: "false" },
+        { key: "BOT_RUNNING", value: "false" },
+      ],
+      { onConflict: "key" },
+    );
+
+  if (stateReset.error) {
+    throw new Error(`Failed to reset bot state: ${stateReset.error.message}`);
+  }
+
+  return normalizePaperAccount(data);
+}
+
 export async function listPaperTrades(limit = 50): Promise<PaperTrade[]> {
   await ensureSeedData();
   const supabase = getSupabaseAdmin();
