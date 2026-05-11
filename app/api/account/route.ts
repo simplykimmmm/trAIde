@@ -15,7 +15,7 @@ export async function GET() {
   const isVercel = process.env.VERCEL === "1" || Boolean(process.env.VERCEL_URL);
   const hasFinnhubKey = Boolean(process.env.FINNHUB_API_KEY);
   const hasGeminiKey = Boolean(process.env.GEMINI_API_KEY);
-  const botRunning = isBotRunning();
+  const botRunning = await isBotRunning();
   const session = getTradingSession();
   const deploymentWarnings = [
     !hasFinnhubKey ? "FINNHUB_API_KEY is missing in this deployment, so market data falls back to mock quotes." : null,
@@ -28,9 +28,9 @@ export async function GET() {
     mode: "paper",
     marketDataProvider: getMarketDataProvider(),
     liveTradingEnabled: process.env.LIVE_TRADING === "true",
-    killSwitchActive: isKillSwitchActive(),
+    killSwitchActive: await isKillSwitchActive(),
     botRunning,
-    botSettings: getBotSettings(),
+    botSettings: await getBotSettings(),
     session,
     deployment: {
       host: isVercel ? "vercel" : "local",
