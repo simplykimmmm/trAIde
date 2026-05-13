@@ -5,6 +5,7 @@ import { getMarketQuote } from "@/lib/market";
 import { filterSymbolsForSession, getTradingSession } from "@/lib/market/session";
 import { buildIndicatorSnapshot } from "@/lib/strategy/indicators";
 import { getWatchlist } from "@/lib/watchlist";
+import { scoreNewsSentiment, type SentimentSignal } from "./sentiment";
 import type { OpportunityCandidate, OpportunitySource } from "./types";
 
 const DEFAULT_UNIVERSE = [
@@ -66,8 +67,11 @@ export function buildOpportunityAnalysis(candidate: OpportunityCandidate): AIAna
   const stopPct = clamp(candidate.volatilityPct / 3, 0.003, 0.03);
   const takeProfitPct = clamp(candidate.volatilityPct / 2, 0.004, 0.04);
   const highVolPenalty = candidate.regime === "HIGH_VOLATILITY" ? 0.04 : 0;
-  const confidence = clamp(0.58 + candidate.score / 100 - highVolPenalty, 0.55, 0.84);
-  const action = candidate.source === "DROP_BOUNCE" || candidate.source === "NEWS" || candidate.source === "VOLATILITY" ? "BUY" : "HOLD";
+  const sentimentPenalty = candidate.sentimentSignal === "CAUTION" ? 0.08 : 0;
+  const confidence = clamp(0.58 + candidate.score / 100 - highVolPenalty - sentimentPenalty, 0.55, 0.84);
+  const action = candidate.sentimentSignal === "CAUTION"
+    ? "HOLD"
+    : candidate.source === "DROP_BOUNCE" || candidate.source === "NEWS" || candidate.source === "SENTIMENT" || candidate.source === "VOLATILITY" ? "BUY" : "HOLD";
 
   return {
     symbol: candidate.symbol,
@@ -87,14 +91,16 @@ function buildOpportunity(symbol: string, quote: MarketQuote, news: FinnhubNewsI
   const volatilityPct = calculateVolatilityPct(quote);
   const recentMovePct = calculateRecentMovePct(candles);
   const indicators = buildIndicatorSnapshot(candles);
-  const source = chooseSource(priceChangePct, volatilityPct, recentMovePct, Boolean(news), indicators.regime);
-  const newsBoost = news ? 18 : 0;
+  const sentiment = scoreNewsSentiment(news);
+  const source = chooseSource(priceChangePct, volatilityPct, recentMovePct, Boolean(news), indicators.regime, sentiment.sentimentSignal);
+  const newsBoost = news ? 12 : 0;
+  const sentimentBoost = calculateSentimentBoost(sentiment.sentimentSignal, priceChangePct, indicators.regime);
   const dropBounceBoost = source === "DROP_BOUNCE" ? 20 : 0;
   const regimeBoost = indicators.regime === "OVERSOLD_BOUNCE" ? 14 : indicators.regime === "TRENDING" ? 10 : indicators.regime === "HIGH_VOLATILITY" ? -10 : 0;
   const volatilityScore = clamp(volatilityPct * 1200, 0, 36);
   const moveScore = clamp(Math.abs(priceChangePct) * 900, 0, 28);
   const recentScore = clamp(Math.abs(recentMovePct ?? 0) * 1500, 0, 18);
-  const score = Math.round(clamp(newsBoost + dropBounceBoost + regimeBoost + volatilityScore + moveScore + recentScore, 0, 100));
+  const score = Math.round(clamp(newsBoost + sentimentBoost + dropBounceBoost + regimeBoost + volatilityScore + moveScore + recentScore, 0, 100));
 
   return {
     symbol,
@@ -109,9 +115,13 @@ function buildOpportunity(symbol: string, quote: MarketQuote, news: FinnhubNewsI
     atrPct: indicators.atrPct,
     trendPct: indicators.trendPct,
     regime: indicators.regime,
+    sentimentScore: sentiment.sentimentScore,
+    sentimentLabel: sentiment.sentimentLabel,
+    sentimentSignal: sentiment.sentimentSignal,
+    sentimentReason: sentiment.sentimentReason,
     cryptoOnlySession,
     headline: news?.headline,
-    reason: buildReason(source, priceChangePct, volatilityPct, recentMovePct, news, indicators.regime, cryptoOnlySession),
+    reason: buildReason(source, priceChangePct, volatilityPct, recentMovePct, news, indicators.regime, cryptoOnlySession, sentiment.sentimentSignal, sentiment.sentimentReason),
     generatedAt: new Date().toISOString(),
   };
 }
@@ -185,9 +195,13 @@ function calculateRecentMovePct(candles: Array<{ close: number }>): number | und
   return Number(((last - first) / first).toFixed(4));
 }
 
-function chooseSource(priceChangePct: number, volatilityPct: number, recentMovePct: number | undefined, hasNews: boolean, regime: string): OpportunitySource {
+function chooseSource(priceChangePct: number, volatilityPct: number, recentMovePct: number | undefined, hasNews: boolean, regime: string, sentimentSignal: SentimentSignal): OpportunitySource {
   if (regime === "OVERSOLD_BOUNCE" || ((priceChangePct <= -0.01 || (recentMovePct ?? 0) <= -0.006) && volatilityPct >= 0.012)) {
     return "DROP_BOUNCE";
+  }
+
+  if (hasNews && sentimentSignal !== "NEUTRAL") {
+    return "SENTIMENT";
   }
 
   if (hasNews) {
@@ -201,19 +215,40 @@ function chooseSource(priceChangePct: number, volatilityPct: number, recentMoveP
   return "MOCK";
 }
 
-function buildReason(source: OpportunitySource, priceChangePct: number, volatilityPct: number, recentMovePct: number | undefined, news: FinnhubNewsItem | undefined, regime: string, cryptoOnlySession: boolean): string {
+function calculateSentimentBoost(signal: SentimentSignal, priceChangePct: number, regime: string): number {
+  if (signal === "CAUTION") {
+    return -18;
+  }
+
+  if (signal === "MOMENTUM_BUY") {
+    return 10;
+  }
+
+  if (signal === "CONTRARIAN_BUY") {
+    return priceChangePct <= -0.01 || regime === "OVERSOLD_BOUNCE" ? 16 : 6;
+  }
+
+  return 0;
+}
+
+function buildReason(source: OpportunitySource, priceChangePct: number, volatilityPct: number, recentMovePct: number | undefined, news: FinnhubNewsItem | undefined, regime: string, cryptoOnlySession: boolean, sentimentSignal: SentimentSignal, sentimentReason: string): string {
   const change = `${(priceChangePct * 100).toFixed(2)}%`;
   const vol = `${(volatilityPct * 100).toFixed(2)}%`;
   const recent = typeof recentMovePct === "number" ? `, recent ${(recentMovePct * 100).toFixed(2)}%` : "";
   const session = cryptoOnlySession ? " Weekend crypto-only." : "";
   const regimeText = regime !== "UNCONFIRMED" ? ` Regime ${regime}.` : "";
+  const sentimentText = sentimentSignal !== "NEUTRAL" ? ` ${sentimentReason}` : "";
 
   if (source === "DROP_BOUNCE") {
-    return `Fast drop-bounce watch: day change ${change}, intraday range ${vol}${recent}.${regimeText}${session}`;
+    return `Fast drop-bounce watch: day change ${change}, intraday range ${vol}${recent}.${regimeText}${sentimentText}${session}`;
+  }
+
+  if (source === "SENTIMENT") {
+    return `Sentiment-linked watch: day change ${change}, range ${vol}.${regimeText}${sentimentText}${session} ${news?.headline ?? ""}`.trim();
   }
 
   if (source === "NEWS") {
-    return `News-linked symbol with day change ${change}, range ${vol}.${regimeText}${session} ${news?.headline ?? ""}`.trim();
+    return `News-linked symbol with day change ${change}, range ${vol}.${regimeText}${sentimentText}${session} ${news?.headline ?? ""}`.trim();
   }
 
   if (source === "VOLATILITY") {

@@ -97,7 +97,7 @@ type Suggestion = {
 
 type Opportunity = {
   symbol: string;
-  source: "NEWS" | "VOLATILITY" | "DROP_BOUNCE" | "MOCK";
+  source: "NEWS" | "SENTIMENT" | "VOLATILITY" | "DROP_BOUNCE" | "MOCK";
   score: number;
   lastPrice: number;
   priceChangePct: number;
@@ -108,6 +108,10 @@ type Opportunity = {
   atrPct?: number;
   trendPct?: number;
   regime?: string;
+  sentimentScore?: number;
+  sentimentLabel?: string;
+  sentimentSignal?: string;
+  sentimentReason?: string;
   cryptoOnlySession?: boolean;
   headline?: string;
   reason: string;
@@ -174,7 +178,7 @@ export default function DashboardPage() {
   });
   const draftRefreshSeconds = speedLevelToSeconds(draftSpeedLevel);
   const draftSpeedMultiplier = calculateSpeedMultiplier(draftRefreshSeconds);
-  const localHeartbeat = useMemo(() => new Date().toLocaleTimeString(), [uiTick]);
+  const localHeartbeat = useMemo(() => (uiTick === 0 ? "--:--:--" : new Date().toLocaleTimeString()), [uiTick]);
   const actionCopy = getActionCopy(controlBusy, botTarget, fastLoading, slowLoading, loading);
 
   function showNotice(text: string, tone: NoticeTone = "info") {
@@ -825,6 +829,12 @@ export default function DashboardPage() {
                       {typeof opportunity.rsi2 === "number" ? `, RSI-2 ${opportunity.rsi2}` : ""}
                       {typeof opportunity.atrPct === "number" ? `, ATR ${percent(opportunity.atrPct)}` : ""}
                     </div>
+                    {typeof opportunity.sentimentScore === "number" ? (
+                      <div className={opportunity.sentimentSignal === "CAUTION" ? "truncate text-xs font-medium text-red-700" : "truncate text-xs text-slate-500"}>
+                        Sentiment {opportunity.sentimentLabel?.replace(/_/g, " ") ?? "NEUTRAL"} {opportunity.sentimentScore > 0 ? "+" : ""}{opportunity.sentimentScore}
+                        {opportunity.sentimentSignal && opportunity.sentimentSignal !== "NEUTRAL" ? `, ${opportunity.sentimentSignal.replace(/_/g, " ")}` : ""}
+                      </div>
+                    ) : null}
                     {opportunity.headline ? <div className="truncate text-xs text-slate-500">{opportunity.headline}</div> : null}
                   </div>
                   <div className={opportunity.priceChangePct < 0 ? "text-sm font-semibold text-red-700" : "text-sm font-semibold text-emerald-700"}>
@@ -837,7 +847,7 @@ export default function DashboardPage() {
             </div>
             <div className="mt-3 text-xs text-slate-500">
               {account?.session.cryptoOnly ? "Weekend/off-session mode is active: new scanner ideas are crypto-only. " : ""}
-              Scanner uses news, volatility, RSI, ATR, and regime filters to find paper-trading candidates. It is not a profit guarantee.
+              Scanner uses news sentiment, volatility, RSI, ATR, and regime filters to find paper-trading candidates. It is not a profit guarantee.
             </div>
           </Panel>
 
@@ -1281,7 +1291,7 @@ function buildActivityRows(suggestions: Suggestion[], positions: Position[], tra
   return [...suggested, ...open, ...recent].slice(0, 8);
 }
 
-type MoveType = "SUGGESTED" | "OPEN" | "CLOSED" | "REJECTED" | "ANALYSIS" | "NEWS" | "VOLATILITY" | "SCALP" | "MOCK";
+type MoveType = "SUGGESTED" | "OPEN" | "CLOSED" | "REJECTED" | "ANALYSIS" | "NEWS" | "SENTIMENT" | "VOLATILITY" | "SCALP" | "MOCK";
 
 type Move = {
   id: string;
@@ -1383,6 +1393,7 @@ function MoveBadge({ type }: { type: MoveType }) {
     REJECTED: "bg-red-100 text-red-800",
     ANALYSIS: "bg-amber-100 text-amber-900",
     NEWS: "bg-blue-100 text-blue-800",
+    SENTIMENT: "bg-cyan-100 text-cyan-800",
     VOLATILITY: "bg-purple-100 text-purple-800",
     SCALP: "bg-emerald-100 text-emerald-800",
     MOCK: "bg-slate-100 text-slate-700",

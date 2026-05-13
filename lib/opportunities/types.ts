@@ -1,4 +1,6 @@
-export type OpportunitySource = "NEWS" | "VOLATILITY" | "DROP_BOUNCE" | "MOCK";
+import type { SentimentLabel, SentimentSignal } from "./sentiment";
+
+export type OpportunitySource = "NEWS" | "SENTIMENT" | "VOLATILITY" | "DROP_BOUNCE" | "MOCK";
 
 export type OpportunityCandidate = {
   symbol: string;
@@ -13,6 +15,10 @@ export type OpportunityCandidate = {
   atrPct?: number;
   trendPct?: number;
   regime?: string;
+  sentimentScore?: number;
+  sentimentLabel?: SentimentLabel;
+  sentimentSignal?: SentimentSignal;
+  sentimentReason?: string;
   cryptoOnlySession?: boolean;
   headline?: string;
   reason: string;

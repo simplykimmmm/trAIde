@@ -125,7 +125,7 @@ The Start button enables a paper-bot refresh loop using the dashboard speed sett
 
 ## Opportunity Scanner
 
-The server-side opportunity scanner uses Finnhub quotes, market news, and recent candles when `FINNHUB_API_KEY` is configured. It ranks broader stock and crypto candidates from `OPPORTUNITY_UNIVERSE`, looks for news-linked symbols, RSI/ATR-confirmed high volatility, regime-filtered momentum, and drop-bounce setups, then sends qualifying non-mock ideas through the same risk engine as watchlist trades.
+The server-side opportunity scanner uses Finnhub quotes, market news, and recent candles when `FINNHUB_API_KEY` is configured. It ranks broader stock and crypto candidates from `OPPORTUNITY_UNIVERSE`, looks for news-linked symbols, quantified headline sentiment, RSI/ATR-confirmed high volatility, regime-filtered momentum, and drop-bounce setups, then sends qualifying non-mock ideas through the same risk engine as watchlist trades. Material-risk headlines such as fraud, bankruptcy, lawsuits, or regulatory probes are treated as caution signals rather than automatic dip-buy setups.
 
 When `WEEKEND_CRYPTO_ONLY=true`, the app switches to crypto-only scanning from Friday after the normal US equity close window through Monday premarket. During that window, stock symbols are filtered out of analysis, suggestions, auto paper execution, and manual approvals; crypto symbols such as `BTC/USD`, `ETH/USD`, `SOL/USD`, and `DOGE/USD` remain available in paper mode.
 
